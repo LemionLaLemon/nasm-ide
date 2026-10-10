@@ -198,7 +198,7 @@ export function abiReturn(fn: LibcFunction): string {
 }
 
 /** Full hover/completion markdown for a libc function. */
-export function renderLibcFunction(fn: LibcFunction): string {
+export function renderLibcFunction(fn: LibcFunction, linkHint?: string): string {
     const lines: string[] = [];
     lines.push("```c");
     lines.push(fn.signature);
@@ -220,13 +220,13 @@ export function renderLibcFunction(fn: LibcFunction): string {
         }
     }
     const retLoc = abiReturn(fn);
-    if (retLoc) {
+    if (retLoc && fn.returns) {
         lines.push("");
         lines.push("**Returns**");
         lines.push("");
         lines.push(`- \`${retLoc}\` - ${fn.returns}`);
     }
-    const lib = fn.header.includes("-lm") ? "-lm" : "-lc";
+    const lib = linkHint ?? (fn.header.includes("-lm") ? "-lm" : "-lc");
     lines.push("");
     lines.push(`C library (${fn.header}) \u2014 link with \`${lib}\`.`);
     lines.push("Calls clobber `rax`, `rcx`, `rdx`, `rsi`, `rdi`, `r8`–`r11`; `rbx`, `rbp`, `r12`–`r15` are preserved.");

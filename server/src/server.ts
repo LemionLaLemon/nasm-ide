@@ -34,6 +34,7 @@ import { DocumentModel, parseDocument, renderSymbolDoc } from "./parser";
 import { getLibcCompletions, getLibcFunction, renderLibcFunction } from "./libcData";
 import { LibraryIndex } from "./libraries";
 import { listLibraryCandidates } from "./libscan";
+import { buildHeaderIndex, HeaderFunction, manSummary, renderHeaderFunction } from "./headerdocs";
 
 interface DiagnosticsSettings {
     enable: boolean;
@@ -78,6 +79,28 @@ const debounceTimers = new Map<string, NodeJS.Timeout>();
 let workspaceRoot: string | null = null;
 const workspaceIndex = new Map<string, IndexEntry[]>();
 const libraryIndex = new LibraryIndex();
+let headerIndexKey = "";
+let headerFunctions = new Map<string, HeaderFunction[]>();
+
+function applySettings(settings: NasmIdeSettings): void {
+    activeSettings = settings;
+    libraryIndex.ensure(settings.libraries);
+    ensureHeaderIndex(settings.libraries);
+}
+
+function ensureHeaderIndex(flags: string[]): void {
+    const key = JSON.stringify([...flags].sort());
+    if (key === headerIndexKey) {
+        return;
+    }
+    headerIndexKey = key;
+    headerFunctions = buildHeaderIndex(flags, (flag, name) => libraryIndex.providesIn(flag, name)).functions;
+}
+
+function headerDocValue(fn: HeaderFunction): string {
+    const summary = fn.summary || manSummary(fn.name) || "No description found in headers or man pages.";
+    return renderHeaderFunction(fn, summary);
+}
 
 connection.onInitialize((params: InitializeParams): InitializeResult => {
     const capabilities = params.capabilities;
@@ -117,7 +140,9 @@ connection.onDidChangeConfiguration((change) => {
         globalSettings = (change.settings.nasmIde as NasmIdeSettings) || defaultSettings;
     }
     activeSettings = hasConfigurationCapability ? activeSettings : globalSettings;
-    libraryIndex.ensure(activeSettings.libraries);
+    if (!hasConfigurationCapability) {
+        applySettings(globalSettings);
+    }
     for (const doc of documents.all()) {
         publishMergedDiagnostics(doc);
     }
@@ -210,7 +235,7 @@ function scheduleValidation(doc: TextDocument): void {
 
 async function validateTextDocument(textDocument: TextDocument, fromSave = false): Promise<void> {
     const settings = await getDocumentSettings(textDocument.uri);
-    activeSettings = settings;
+    applySettings(settings);
     if (!settings.diagnostics.enable) {
         nasmDiagnosticsCache.set(textDocument.uri, []);
         connection.sendDiagnostics({ uri: textDocument.uri, diagnostics: [] });
@@ -219,7 +244,6 @@ async function validateTextDocument(textDocument: TextDocument, fromSave = false
     if (settings.diagnostics.mode === "onSave" && !fromSave) {
         return;
     }
-    libraryIndex.ensure(settings.libraries);
     const text = textDocument.getText();
     const tmpDir = os.tmpdir();
     const tmpFile = path.join(tmpDir, `nasm-ide-${Date.now()}-${Math.random().toString(36).slice(2)}.asm`);
@@ -352,6 +376,7 @@ connection.onCompletion((params): CompletionItem[] => {
         if (seenNames.has(fn.name.toLowerCase())) {
             continue;
         }
+        seenNames.add(fn.name.toLowerCase());
         items.push({
             label: fn.name,
             kind: CompletionItemKind.Function,
@@ -359,6 +384,22 @@ connection.onCompletion((params): CompletionItem[] => {
             documentation: {
                 kind: MarkupKind.Markdown,
                 value: renderLibcFunction(fn),
+            },
+        });
+    }
+    for (const [key, fns] of headerFunctions) {
+        if ((lowerPrefix && !key.startsWith(lowerPrefix)) || !fns.length || seenNames.has(key)) {
+            continue;
+        }
+        seenNames.add(key);
+        const first = fns[0];
+        items.push({
+            label: first.name,
+            kind: CompletionItemKind.Function,
+            detail: `${first.lib} \u2014 ${first.header}`,
+            documentation: {
+                kind: MarkupKind.Markdown,
+                value: headerDocValue(first),
             },
         });
     }
@@ -454,6 +495,13 @@ connection.onHover((params): Hover | null => {
     if (libc) {
         return {
             contents: { kind: MarkupKind.Markdown, value: renderLibcFunction(libc) },
+            range: toRange(document, wordRange.start, wordRange.end),
+        };
+    }
+    const headerEntries = headerFunctions.get(lower);
+    if (headerEntries && headerEntries.length > 0) {
+        return {
+            contents: { kind: MarkupKind.Markdown, value: headerDocValue(headerEntries[0]) },
             range: toRange(document, wordRange.start, wordRange.end),
         };
     }
@@ -728,10 +776,11 @@ function getWorkspaceDiagnostics(doc: TextDocument): Diagnostic[] {
     }
     if (settings.diagnostics.unresolvedExterns && model.externs) {
         libraryIndex.ensure(settings.libraries);
+        ensureHeaderIndex(settings.libraries);
         const libList = settings.libraries.length ? settings.libraries.join(", ") : "(none configured)";
         for (const ext of model.externs) {
             const key = ext.name.toLowerCase();
-            if (workspaceIndex.has(key) || libraryIndex.provides(ext.name)) {
+            if (workspaceIndex.has(key) || libraryIndex.provides(ext.name) || headerFunctions.has(key)) {
                 continue;
             }
             out.push({
