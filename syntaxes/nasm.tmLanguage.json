@@ -132,7 +132,7 @@
     "operator": {
       "patterns": [
         {
-          "name": "keyword.operator.word.nasm",
+          "name": "storage.type.data.nasm",
           "match": "(?i)\\b(byte|word|dword|qword|tword|tbyte|oword|yword|zword|rel|abs|wrt|strict|near|short|long|ptr)\\b"
         }
       ]

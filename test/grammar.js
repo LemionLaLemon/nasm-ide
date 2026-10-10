@@ -33,6 +33,13 @@ ok(labelScope === "entity.name.function.nasm", "labels scoped as functions (them
 const order = G.patterns.map((p) => p.include);
 ok(order[order.length - 1] === "#symbol", "catch-all symbol rule is last: " + order.join(","));
 ok(G.repository.symbol.patterns[0].name === "entity.name.function.nasm", "symbols scoped as functions");
+const storageScopes = new Set(
+    G.repository.directive.patterns.filter((r) => /d\[|res\[/.test(r.match || "")).map((r) => r.name)
+);
+ok(
+    storageScopes.has(G.repository.operator.patterns[0].name),
+    "sizes share dq/resq scope: " + G.repository.operator.patterns[0].name
+);
 
 const ordered = ["comment", "label", "directive", "instruction", "register", "number", "string", "operator", "symbol"].flatMap(
     (k) => G.repository[k].patterns
@@ -69,7 +76,7 @@ ok(at("%define").includes("directive"), "%define still directive keyword");
 ok(at("inc eax, 1").includes("instruction"), "inc is an instruction, not a symbol");
 ok(at("dec eax").includes("instruction"), "dec is an instruction, not a symbol");
 for (const w of ["byte", "dword", "qword", "rel", "wrt", "strict"]) {
-    ok(at(w).includes("operator"), `${w} is an operator keyword, not a symbol`);
+    ok(at(w).includes("storage.type.data"), `${w} shares the dq/resq storage color`);
 }
 
 console.log(fails ? `${fails} FAILURES` : "GRAMMAR TESTS PASS");
