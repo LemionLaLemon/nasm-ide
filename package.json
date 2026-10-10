@@ -2,7 +2,7 @@
     "name": "nasm-ide",
     "displayName": "NASM IDE",
     "description": "Language Server Protocol-based IntelliSense, hover docs, cross-file extern support, library-aware diagnostics, and build tasks for NASM-style x86/x86_64 assembly.",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "publisher": "lemion",
     "author": {
         "name": "lemion"
@@ -110,7 +110,8 @@
                     "default": [
                         "c"
                     ],
-                    "description": "Link libraries as -l flags without the prefix (e.g. \"c\" for -lc). Used for unresolved-extern detection and build/link tasks. Use the \"NASM IDE: Pick Link Libraries\" command to search your system."
+                    "description": "Link libraries as -l flags without the prefix (e.g. \"c\" for -lc). Used for unresolved-extern detection and build/link tasks. Use the \"NASM IDE: Pick Link Libraries\" command to search your system.",
+                    "scope": "resource"
                 },
                 "nasmIde.build.linker": {
                     "type": "string",
@@ -119,7 +120,8 @@
                         "gcc"
                     ],
                     "default": "ld",
-                    "description": "Linker used by the nasm-ide build task."
+                    "description": "Linker used by the nasm-ide build task.",
+                    "scope": "resource"
                 },
                 "nasmIde.build.sources": {
                     "type": "array",
@@ -129,17 +131,20 @@
                     "default": [
                         "src/*.asm"
                     ],
-                    "description": "Globs (relative to the workspace folder) of assembly sources to assemble and link."
+                    "description": "Globs (relative to the workspace folder) of assembly sources to assemble and link.",
+                    "scope": "resource"
                 },
                 "nasmIde.build.objDir": {
                     "type": "string",
                     "default": "obj",
-                    "description": "Directory (relative to the workspace folder) for intermediate .o files."
+                    "description": "Directory (relative to the workspace folder) for intermediate .o files.",
+                    "scope": "resource"
                 },
                 "nasmIde.build.output": {
                     "type": "string",
                     "default": "bin/${workspaceFolderBasename}",
-                    "description": "Linked output binary path (relative to the workspace folder)."
+                    "description": "Linked output binary path (relative to the workspace folder).",
+                    "scope": "resource"
                 },
                 "nasmIde.build.extraLdFlags": {
                     "type": "array",
@@ -147,7 +152,8 @@
                         "type": "string"
                     },
                     "default": [],
-                    "description": "Extra flags passed to the linker (e.g. [\"-dynamic-linker\", \"/lib64/ld-linux-x86-64.so.2\"])."
+                    "description": "Extra flags passed to the linker (e.g. [\"-dynamic-linker\", \"/lib64/ld-linux-x86-64.so.2\"]).",
+                    "scope": "resource"
                 }
             }
         },

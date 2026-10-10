@@ -139,6 +139,13 @@ const ok = (c, m) => {
     const tog = calls.configUpdates.find(([k]) => k === "nasmIde.diagnostics.enable");
     ok(tog && tog[1] === false, "toggle flips diagnostics.enable");
 
+    const pkg = require(path.join(__dirname, "..", "package.json"));
+    const props = pkg.contributes.configuration.properties;
+    ok(props["nasmIde.libraries"].scope === "resource", "libraries allows folder scope");
+    for (const k of Object.keys(props).filter((x) => x.startsWith("nasmIde.build."))) {
+        ok(props[k].scope === "resource", `${k} allows folder scope`);
+    }
+
     console.log(fails ? `${fails} FAILURES` : "CLIENT TESTS PASS");
     process.exit(fails ? 1 : 0);
 })().catch((e) => {
