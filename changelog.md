@@ -1,3 +1,7 @@
+# 0.1.7
+
+- Grammar: inc/dec highlighted as instructions; size/operator keywords (byte/dword/rel/...) no longer yellow.
+
 # 0.1.6
 
 - Library changes apply live (config re-fetch + index rebuild on change, no reload).

@@ -28,6 +28,9 @@
       "include": "#string"
     },
     {
+      "include": "#operator"
+    },
+    {
       "include": "#symbol"
     }
   ],
@@ -64,7 +67,7 @@
       "patterns": [
         {
           "name": "keyword.instruction.nasm",
-          "match": "(?i)\\b(mov|lea|add|sub|mul|imul|div|idiv|and|or|xor|not|shl|shr|sar|rol|ror|cmp|test|jmp|je|jne|jg|jge|jl|jle|call|ret|push|pop|syscall|xchg|bswap|movsx|movzx|movsxd|cbw|cwde|cdqe|cwd|cdq|cqo|cmov|cmova|cmovae|cmovb|cmovbe|cmovc|cmove|cmovg|cmovge|cmovl|cmovle|cmovna|cmovnae|cmovnb|cmovnbe|cmovnc|cmovne|cmovng|cmovnge|cmovnl|cmovnle|cmovno|cmovnp|cmovns|cmovnz|cmovo|cmovp|cmovpe|cmovpo|cmovs|cmovz|movs|movsb|movsw|movsd|movsq|enter|leave|pushf|pushfd|pushfq|popf|popfd|popfq|pushad|popad|pusha|popa|neg|xadd|adc|sbb|daa|das|ja|jae|jb|jbe|jc|jnc|jz|jnz|js|jns|jo|jno|jp|jnp|jpe|jpo|jecxz|jrcxz|jcxz|loop|loope|loopne|loopz|loopnz|seta|setae|setb|setbe|setc|sete|setg|setge|setl|setle|setna|setnae|setnb|setnbe|setnc|setne|setng|setnge|setnl|setnle|setno|setnp|setns|setnz|seto|setp|setpe|setpo|sets|setz|stos|stosb|stosw|stosd|stosq|lods|lodsb|lodsw|lodsd|lodsq|scas|scasb|scasw|scasd|scasq|cmps|cmpsb|cmpsw|cmpsd|cmpsq|rep|repe|repz|repne|repnz|clc|stc|cmc|cld|std|cli|sti|lahf|sahf|int|int3|into|iret|iretd|iretq|nop|hlt|pause|cpuid|rdtsc|rdpmc|xgetbv|mfence|lfence|sfence|lock|in|out|ins|insb|insw|insd|outs|outsb|outsw|outsd|sysenter|sysexit|sysret|ud2|movaps|movups|movapd|movupd|movdqa|movdqu|movd|movq|addps|addpd|subps|subpd|mulps|mulpd|divps|divpd|sqrtps|xorps|xorpd|andps|andpd|orps|orpd|pxor|pand|por|paddb|paddw|paddd|paddq|psubb|psubw|psubd|psubq|pcmpeqb|pcmpeqw|pcmpeqd|cvtsi2ss|cvtsi2sd|cvtss2si|cvtsd2si|cvttss2si|cvttsd2si|ucomiss|ucomisd|comiss|vmovaps|vmovups|vaddps|vxorps|vpaddd|vpxor|addss|addsd|subss|subsd|mulss|mulsd|divss|divsd|sqrtss|sqrtsd|maxss|maxsd|minss|minsd|rcpss|rsqrtss|rcpps|rsqrtps|andnps|andnpd|comiss|comisd|movss|movsd|movsw|movlps|movhps|movlpd|movhpd|movmskps|movmskpd|shufps|shufpd|unpcklps|unpckhps|cvtss2sd|cvtsd2ss|cvtps2pd|cvtpd2ps|cvtdq2ps|cvtps2dq|fld|fst|fstp|fild|fist|fistp|fadd|fsub|fsubr|fmul|fdiv|fdivr|faddp|fsubp|fsubrp|fmulp|fdivp|fdivrp|fchs|fabs|fsqrt|fcom|fcomp|fcompp|fxch|fldz|fld1|fldpi|fldcw|fstcw|fstsw|finit|fninit|fclex|fcos|fsin|fptan|fpatan|fyl2x|f2xm1|fscale|frndint|ftst|fxam|vaddsd|vaddss|vsubsd|vmulsd|vmulss|vdivsd|vsqrtsd|vmovsd|vmovss|vucomisd|vandpd|vxorpd)\\b"
+          "match": "(?i)\\b(mov|lea|add|sub|mul|imul|div|idiv|and|or|xor|not|shl|shr|sar|rol|ror|cmp|test|jmp|je|jne|jg|jge|jl|jle|call|ret|push|pop|syscall|xchg|bswap|movsx|movzx|movsxd|cbw|cwde|cdqe|cwd|cdq|cqo|cmov|cmova|cmovae|cmovb|cmovbe|cmovc|cmove|cmovg|cmovge|cmovl|cmovle|cmovna|cmovnae|cmovnb|cmovnbe|cmovnc|cmovne|cmovng|cmovnge|cmovnl|cmovnle|cmovno|cmovnp|cmovns|cmovnz|cmovo|cmovp|cmovpe|cmovpo|cmovs|cmovz|movs|movsb|movsw|movsd|movsq|enter|leave|pushf|pushfd|pushfq|popf|popfd|popfq|pushad|popad|pusha|popa|neg|xadd|adc|sbb|daa|das|ja|jae|jb|jbe|jc|jnc|jz|jnz|js|jns|jo|jno|jp|jnp|jpe|jpo|jecxz|jrcxz|jcxz|loop|loope|loopne|loopz|loopnz|seta|setae|setb|setbe|setc|sete|setg|setge|setl|setle|setna|setnae|setnb|setnbe|setnc|setne|setng|setnge|setnl|setnle|setno|setnp|setns|setnz|seto|setp|setpe|setpo|sets|setz|stos|stosb|stosw|stosd|stosq|lods|lodsb|lodsw|lodsd|lodsq|scas|scasb|scasw|scasd|scasq|cmps|cmpsb|cmpsw|cmpsd|cmpsq|rep|repe|repz|repne|repnz|clc|stc|cmc|cld|std|cli|sti|lahf|sahf|int|int3|into|iret|iretd|iretq|nop|hlt|pause|cpuid|rdtsc|rdpmc|xgetbv|mfence|lfence|sfence|lock|in|out|ins|insb|insw|insd|outs|outsb|outsw|outsd|sysenter|sysexit|sysret|ud2|movaps|movups|movapd|movupd|movdqa|movdqu|movd|movq|addps|addpd|subps|subpd|mulps|mulpd|divps|divpd|sqrtps|xorps|xorpd|andps|andpd|orps|orpd|pxor|pand|por|paddb|paddw|paddd|paddq|psubb|psubw|psubd|psubq|pcmpeqb|pcmpeqw|pcmpeqd|cvtsi2ss|cvtsi2sd|cvtss2si|cvtsd2si|cvttss2si|cvttsd2si|ucomiss|ucomisd|comiss|vmovaps|vmovups|vaddps|vxorps|vpaddd|vpxor|addss|addsd|subss|subsd|mulss|mulsd|divss|divsd|sqrtss|sqrtsd|maxss|maxsd|minss|minsd|rcpss|rsqrtss|rcpps|rsqrtps|andnps|andnpd|comiss|comisd|movss|movsd|movsw|movlps|movhps|movlpd|movhpd|movmskps|movmskpd|shufps|shufpd|unpcklps|unpckhps|cvtss2sd|cvtsd2ss|cvtps2pd|cvtpd2ps|cvtdq2ps|cvtps2dq|fld|fst|fstp|fild|fist|fistp|fadd|fsub|fsubr|fmul|fdiv|fdivr|faddp|fsubp|fsubrp|fmulp|fdivp|fdivrp|fchs|fabs|fsqrt|fcom|fcomp|fcompp|fxch|fldz|fld1|fldpi|fldcw|fstcw|fstsw|finit|fninit|fclex|fcos|fsin|fptan|fpatan|fyl2x|f2xm1|fscale|frndint|ftst|fxam|vaddsd|vaddss|vsubsd|vmulsd|vmulss|vdivsd|vsqrtsd|vmovsd|vmovss|vucomisd|vandpd|vxorpd|inc|dec)\\b"
         }
       ]
     },
@@ -123,6 +126,14 @@
         {
           "name": "entity.name.function.nasm",
           "match": "[A-Za-z_.$][A-Za-z0-9_.$]*"
+        }
+      ]
+    },
+    "operator": {
+      "patterns": [
+        {
+          "name": "keyword.operator.word.nasm",
+          "match": "(?i)\\b(byte|word|dword|qword|tword|tbyte|oword|yword|zword|rel|abs|wrt|strict|near|short|long|ptr)\\b"
         }
       ]
     }
