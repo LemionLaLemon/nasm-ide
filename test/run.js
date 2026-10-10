@@ -61,16 +61,16 @@ function unit() {
     const cands = L.listLibraryCandidates();
     ok(cands.length > 50 && cands.some((c) => c.flag === "c"), `candidates (${cands.length})`);
 
-    const D = require(path.join(SERVER_OUT, "libcData.js"));
-    const all = D.getLibcCompletions("");
+    const LC = require(path.join(SERVER_OUT, "libcData.js"));
+    const all = LC.getLibcCompletions("");
     ok(all.length >= 50, `libc dataset (${all.length})`);
-    ok(D.getLibcFunction("printf").signature.includes("const char *format"), "printf signature");
-    const r = D.renderLibcFunction(D.getLibcFunction("printf"));
-    ok(r.includes("`rdi` - format") && r.includes("`rax` - number of vector") && r.includes("clobber"), "printf ABI render");
-    const s = D.renderLibcFunction(D.getLibcFunction("sqrt"));
-    ok(s.includes("`xmm0` - x:") && s.includes("-lm"), "sqrt uses xmm0 + lm hint");
-    const f = D.renderLibcFunction(D.getLibcFunction("free"));
-    ok(!f.includes("**Returns**") && f.includes("`rdi` - ptr"), "void fn has no Returns");
+    ok(LC.getLibcFunction("printf").signature.includes("const char *format"), "printf signature");
+    const rp = LC.renderLibcFunction(LC.getLibcFunction("printf"));
+    ok(rp.includes("`rdi` - format") && rp.includes("`rax` - number of vector") && rp.includes("clobber"), "printf ABI render");
+    const rs = LC.renderLibcFunction(LC.getLibcFunction("sqrt"));
+    ok(rs.includes("`xmm0` - x:") && rs.includes("-lm"), "sqrt uses xmm0 + lm hint");
+    const rf = LC.renderLibcFunction(LC.getLibcFunction("free"));
+    ok(!rf.includes("**Returns**") && rf.includes("`rdi` - ptr"), "void fn has no Returns");
 
     const { LibraryIndex } = require(path.join(SERVER_OUT, "libraries.js"));
     const idx = new LibraryIndex();
