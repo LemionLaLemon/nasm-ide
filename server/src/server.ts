@@ -133,14 +133,22 @@ connection.onInitialized(() => {
     }
 });
 
-connection.onDidChangeConfiguration((change) => {
+connection.onDidChangeConfiguration(async (change) => {
     if (hasConfigurationCapability) {
         documentSettings.clear();
+        // Re-fetch immediately: library changes (e.g. from the picker) must
+        // rebuild the nm/header indexes NOW so hover, completion, and
+        // diagnostics pick them up without a reload or a keystroke.
+        const docs = documents.all();
+        if (docs.length > 0) {
+            try {
+                applySettings(await getDocumentSettings(docs[0].uri));
+            } catch {
+                // keep previous settings if the client won't answer
+            }
+        }
     } else {
         globalSettings = (change.settings.nasmIde as NasmIdeSettings) || defaultSettings;
-    }
-    activeSettings = hasConfigurationCapability ? activeSettings : globalSettings;
-    if (!hasConfigurationCapability) {
         applySettings(globalSettings);
     }
     for (const doc of documents.all()) {

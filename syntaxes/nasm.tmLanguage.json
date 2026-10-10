@@ -26,6 +26,9 @@
     },
     {
       "include": "#string"
+    },
+    {
+      "include": "#symbol"
     }
   ],
   "repository": {
@@ -40,7 +43,7 @@
     "label": {
       "patterns": [
         {
-          "name": "entity.name.label.nasm",
+          "name": "entity.name.function.nasm",
           "match": "^[ \\t]*([A-Za-z_.$][A-Za-z0-9_.$]*)\\s*:"
         }
       ]
@@ -112,6 +115,14 @@
               "match": "\\\\."
             }
           ]
+        }
+      ]
+    },
+    "symbol": {
+      "patterns": [
+        {
+          "name": "entity.name.function.nasm",
+          "match": "[A-Za-z_.$][A-Za-z0-9_.$]*"
         }
       ]
     }

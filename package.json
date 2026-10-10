@@ -2,7 +2,7 @@
     "name": "nasm-ide",
     "displayName": "NASM IDE",
     "description": "Language Server Protocol-based IntelliSense, hover docs, cross-file extern support, library-aware diagnostics, and build tasks for NASM-style x86/x86_64 assembly.",
-    "version": "0.1.5",
+    "version": "0.1.6",
     "publisher": "lemion",
     "author": {
         "name": "lemion"
@@ -201,7 +201,7 @@
         "compile:server": "tsc -p ./server",
         "watch": "tsc -watch -p ./ & tsc -watch -p ./server",
         "package": "npx -y @vscode/vsce package",
-        "test": "node ./test/run.js && node ./test/client.js"
+        "test": "node ./test/run.js && node ./test/client.js && node ./test/grammar.js"
     },
     "devDependencies": {
         "@types/node": "^20.19.43",
