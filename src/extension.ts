@@ -91,7 +91,8 @@ async function pickLibraries(): Promise<void> {
         void vscode.window.showErrorMessage(`NASM IDE: could not scan link libraries: ${String(err)}`);
         return;
     }
-    const config = vscode.workspace.getConfiguration("nasmIde");
+    const folder = folders[0];
+    const config = vscode.workspace.getConfiguration("nasmIde", folder.uri);
     const current = new Set(config.get<string[]>("libraries", ["c"]));
     const picked = await vscode.window.showQuickPick(
         candidates.map((c) => ({
