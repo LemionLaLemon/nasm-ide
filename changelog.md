@@ -1,3 +1,8 @@
+# 0.1.9
+
+- Stack pairing analysis: push/pop families highlighted distinctly, unpaired pushes/pops and unbalanced rets are errors.
+- Settings merge with defaults so partial client configs can't silently disable features.
+
 # 0.1.8
 
 - Size/operator keywords share the dq/resq storage scope.

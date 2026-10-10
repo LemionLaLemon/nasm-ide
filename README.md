@@ -65,10 +65,25 @@ Force symbol yellow in any theme (`settings.json`):
 ```json
 "editor.tokenColorCustomizations": {
     "textMateRules": [
-        { "scope": "entity.name.function.nasm", "settings": { "foreground": "#DCDCAA" } }
+        { "scope": "entity.name.function.nasm", "settings": { "foreground": "#DCDCAA" } },
+        { "scope": "keyword.control.flow.push.nasm", "settings": { "foreground": "#89D185" } },
+        { "scope": "keyword.control.flow.pop.nasm", "settings": { "foreground": "#C586C0" } }
     ]
 }
 ```
+
+## Stack checking
+
+`push`/`pop` families are highlighted distinctly, and the server pairs them:
+
+- `pop` with a provably empty stack, or `ret` with pushes never popped on
+  the function-entry path: **error**.
+- Any push/pop left unmatched by whole-function linear pairing: **error**
+  on that line (the "can't find its pair" dark red).
+
+This is a pairing heuristic, not dataflow analysis: branchy functions
+where a push on one path pairs with a pop on another can flag correct code.
+Disable per-workspace with `nasmIde.diagnostics.stackCheck: false`.
 
 - Tags: `@param [size] name desc`, `@return [size] [name] desc`.
 - Sizes: `byte word dword qword tword oword yword zword`, `N bytes`

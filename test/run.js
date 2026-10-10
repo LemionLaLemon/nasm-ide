@@ -15,7 +15,7 @@ const ok = (c, m) => {
 
 function unit() {
     const D = require(path.join(SERVER_OUT, "nasmData.js"));
-    ok(D.getInstructionCompletions("").length === 192, "192 instructions");
+    ok(D.getInstructionCompletions("").length === 198, "198 instructions");
     ok(D.getRegisterCompletions("").length === 136, "136 registers");
     ok(D.getDirectiveCompletions("").length === 14, "14 directives");
     ok(D.getInstruction("addsd").full === "Add Scalar Double-Precision", "addsd full");
@@ -79,6 +79,20 @@ function unit() {
     ok(idx.provides("printf") && !idx.provides("totally_made_up_xyz"), "provides()");
     ok(idx.providesIn("c", "printf") && !idx.providesIn("c", "nope"), "per-lib providesIn");
 
+    const S = require(path.join(SERVER_OUT, "stackcheck.js"));
+    const P2 = require(path.join(SERVER_OUT, "parser.js"));
+    const stackOf = (src) => S.analyzeStack(src, P2.parseDocument(src));
+    ok(stackOf("foo:\n    push rbx\n    pop rbx\n    ret\n").length === 0, "balanced function silent");
+    let iss = stackOf("foo:\n    push rbx\n    push r12\n    ret\n");
+    ok(iss.length === 3 && iss.some((d) => /never popped/.test(d.message)), "forgotten pops flagged");
+    iss = stackOf("foo:\n    pop rbx\n    ret\n");
+    ok(iss.some((d) => /without a matching push/.test(d.message)), "pop on empty stack flagged");
+    iss = stackOf("foo:\n    push rbx\n    pop rbx\n    pop rbx\n    ret\n");
+    ok(iss.some((d) => d.line === 3), "second pop flagged");
+    iss = stackOf("global foo\nextern bar\nfoo:\n    push rbx\n    pop rbx\n    ret\n");
+    ok(iss.length === 0, "decls ignored, balanced silent");
+    ok(idx.providesIn("c", "printf") && !idx.providesIn("c", "nope"), "per-lib providesIn");
+
     const H = require(path.join(SERVER_OUT, "headerdocs.js"));
     const protos = H.extractPrototypes("t.h", [
         "extern int alpha(int a, int b);",
@@ -114,7 +128,8 @@ function unit() {
 
 // --- LSP harness ---
 function lspClient(serverJs, extraEnv) {
-    const proc = spawn("node", [serverJs, "--stdio"], { stdio: ["pipe", "pipe", "ignore"], env: { ...process.env, ...extraEnv } });
+    const proc = spawn("node", [serverJs, "--stdio"], { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, ...extraEnv } });
+    proc.stderr.on("data", (d) => console.log("SERVER STDERR:", d.toString().slice(0, 500)));
     let buf = Buffer.alloc(0);
     const pending = new Map();
     let id = 0;
@@ -179,7 +194,7 @@ async function integration() {
     const cannedSettings = {
         nasmPath: "nasm",
         arch: "x86_64",
-        diagnostics: { enable: true, mode: "asYouType", debounceMs: 100, unresolvedExterns: true },
+        diagnostics: { enable: true, mode: "asYouType", debounceMs: 100, unresolvedExterns: true, stackCheck: true },
         libraries: ["c", "X11"],
     };
     c.cannedSettings = cannedSettings;
@@ -326,6 +341,28 @@ async function integration() {
         poll();
     });
     ok(auto.length > 0, "as-you-type diagnostics without save");
+
+    // stack pairing: unbalanced function errors without save (as-you-type)
+    const stUri = `file://${WS}/st.asm`;
+    c.notify("textDocument/didOpen", {
+        textDocument: { uri: stUri, languageId: "nasm", version: 1, text: "draw:\n    push rbx\n    push r12\n    ret\n" },
+    });
+    const st = await new Promise((res, rej) => {
+        const t0 = Date.now();
+        const poll = () => {
+            const matches = c.notes.filter((n) => n.method === "textDocument/publishDiagnostics" && n.params.uri === stUri);
+            const hit = matches.find((n) => n.params.diagnostics.some((d) => d.severity === 1 && /never popped|matching pop/.test(d.message)));
+            if (hit) {
+                return res(hit.params.diagnostics);
+            }
+            if (Date.now() - t0 > 8000) {
+                return rej(new Error("timeout stack"));
+            }
+            setTimeout(poll, 50);
+        };
+        poll();
+    });
+    ok(st.length >= 2, "stack imbalance reported as-you-type");
 
     // conflict: duplicate global in new file
     fs.writeFileSync(`${WS}/c.asm`, ["global calcStrExpr", "calcStrExpr:", "    ret", ""].join("\n"));

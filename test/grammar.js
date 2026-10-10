@@ -41,7 +41,7 @@ ok(
     "sizes share dq/resq scope: " + G.repository.operator.patterns[0].name
 );
 
-const ordered = ["comment", "label", "directive", "instruction", "register", "number", "string", "operator", "symbol"].flatMap(
+const ordered = ["comment", "label", "directive", "push-pop", "instruction", "register", "number", "string", "operator", "symbol"].flatMap(
     (k) => G.repository[k].patterns
 );
 // label definitions keep their scope incl. local labels + indent
@@ -75,6 +75,13 @@ ok(at("section").includes("directive"), "section still directive keyword");
 ok(at("%define").includes("directive"), "%define still directive keyword");
 ok(at("inc eax, 1").includes("instruction"), "inc is an instruction, not a symbol");
 ok(at("dec eax").includes("instruction"), "dec is an instruction, not a symbol");
+ok(at("push rbx").includes("push"), "push has its own scope");
+ok(at("pop rax").includes("pop"), "pop has its own scope");
+ok(at("pushfq").includes("push"), "pushfq scoped as push");
+{
+    const names = G.patterns.map((p) => p.include);
+    ok(names.indexOf("#push-pop") < names.indexOf("#instruction"), "push/pop rules precede instructions");
+}
 for (const w of ["byte", "dword", "qword", "rel", "wrt", "strict"]) {
     ok(at(w).includes("storage.type.data"), `${w} shares the dq/resq storage color`);
 }

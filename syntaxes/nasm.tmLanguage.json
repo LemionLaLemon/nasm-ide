@@ -16,6 +16,9 @@
       "include": "#directive"
     },
     {
+      "include": "#push-pop"
+    },
+    {
       "include": "#instruction"
     },
     {
@@ -134,6 +137,18 @@
         {
           "name": "storage.type.data.nasm",
           "match": "(?i)\\b(byte|word|dword|qword|tword|tbyte|oword|yword|zword|rel|abs|wrt|strict|near|short|long|ptr)\\b"
+        }
+      ]
+    },
+    "push-pop": {
+      "patterns": [
+        {
+          "name": "keyword.control.flow.push.nasm",
+          "match": "(?i)\\b(push|pushf|pushfd|pushfq|pusha|pushad)\\b"
+        },
+        {
+          "name": "keyword.control.flow.pop.nasm",
+          "match": "(?i)\\b(pop|popf|popfd|popfq|popa|popad)\\b"
         }
       ]
     }

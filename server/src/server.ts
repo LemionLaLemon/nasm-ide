@@ -35,12 +35,14 @@ import { getLibcCompletions, getLibcFunction, renderLibcFunction } from "./libcD
 import { LibraryIndex } from "./libraries";
 import { listLibraryCandidates } from "./libscan";
 import { buildHeaderIndex, HeaderFunction, manSummary, renderHeaderFunction } from "./headerdocs";
+import { analyzeStack } from "./stackcheck";
 
 interface DiagnosticsSettings {
     enable: boolean;
     mode: "asYouType" | "onSave";
     debounceMs: number;
     unresolvedExterns: boolean;
+    stackCheck: boolean;
 }
 
 interface NasmIdeSettings {
@@ -53,7 +55,7 @@ interface NasmIdeSettings {
 const defaultSettings: NasmIdeSettings = {
     nasmPath: "nasm",
     arch: "x86_64",
-    diagnostics: { enable: true, mode: "asYouType", debounceMs: 400, unresolvedExterns: true },
+    diagnostics: { enable: true, mode: "asYouType", debounceMs: 400, unresolvedExterns: true, stackCheck: true },
     libraries: ["c"],
 };
 
@@ -83,9 +85,17 @@ let headerIndexKey = "";
 let headerFunctions = new Map<string, HeaderFunction[]>();
 
 function applySettings(settings: NasmIdeSettings): void {
-    activeSettings = settings;
-    libraryIndex.ensure(settings.libraries);
-    ensureHeaderIndex(settings.libraries);
+    // Clients may send partial sections (e.g. older versions unaware of new
+    // keys); fill gaps from defaults so a missing flag can't silently flip
+    // a feature off.
+    activeSettings = {
+        ...defaultSettings,
+        ...settings,
+        diagnostics: { ...defaultSettings.diagnostics, ...(settings.diagnostics || {}) },
+        libraries: settings.libraries ?? defaultSettings.libraries,
+    };
+    libraryIndex.ensure(activeSettings.libraries);
+    ensureHeaderIndex(activeSettings.libraries);
 }
 
 function ensureHeaderIndex(flags: string[]): void {
@@ -795,6 +805,16 @@ function getWorkspaceDiagnostics(doc: TextDocument): Diagnostic[] {
                 range: at(ext.line),
                 message: `unresolved extern \`${ext.name}\`: not defined in the workspace or in libraries (${libList})`,
                 severity: DiagnosticSeverity.Warning,
+                source: "nasm",
+            });
+        }
+    }
+    if (settings.diagnostics.stackCheck) {
+        for (const issue of analyzeStack(doc.getText(), model)) {
+            out.push({
+                range: at(issue.line),
+                message: issue.message,
+                severity: DiagnosticSeverity.Error,
                 source: "nasm",
             });
         }

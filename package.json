@@ -2,7 +2,7 @@
     "name": "nasm-ide",
     "displayName": "NASM IDE",
     "description": "Language Server Protocol-based IntelliSense, hover docs, cross-file extern support, library-aware diagnostics, and build tasks for NASM-style x86/x86_64 assembly.",
-    "version": "0.1.8",
+    "version": "0.1.9",
     "publisher": "lemion",
     "author": {
         "name": "lemion"
@@ -101,6 +101,11 @@
                     "type": "boolean",
                     "default": true,
                     "description": "Warn on `extern` symbols defined neither in the workspace nor in any configured library."
+                },
+                "nasmIde.diagnostics.stackCheck": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Error on push/pop imbalances (unpaired pushes/pops, pop on empty stack, unbalanced ret)."
                 },
                 "nasmIde.libraries": {
                     "type": "array",

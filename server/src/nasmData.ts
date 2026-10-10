@@ -213,6 +213,12 @@ const instructions: Instruction[] = [
     { mnemonic: "vxorpd", full: "Vector XOR Packed Double-Precision", operands: "dest, src1, src2", summary: "AVX bitwise XOR of doubles.", arch: "both" },
     { mnemonic: "ucomiss", full: "Unordered Compare Scalar Single-Precision", operands: "op1, op2", summary: "Compare 32-bit floats, set EFLAGS (no exception on quiet NaN).", arch: "both" },
     { mnemonic: "ucomisd", full: "Unordered Compare Scalar Double-Precision", operands: "op1, op2", summary: "Compare 64-bit floats, set EFLAGS (no exception on quiet NaN).", arch: "both" },
+    { mnemonic: "pushfd", full: "Push EFLAGS", operands: "", summary: "Push 32-bit EFLAGS register.", arch: "both" },
+    { mnemonic: "popfd", full: "Pop EFLAGS", operands: "", summary: "Pop 32-bit EFLAGS register.", arch: "both" },
+    { mnemonic: "pusha", full: "Push All (16-bit)", operands: "", summary: "Push all 16-bit general registers (8 slots).", arch: "x86" },
+    { mnemonic: "pushad", full: "Push All (32-bit)", operands: "", summary: "Push all 32-bit general registers (8 slots).", arch: "x86" },
+    { mnemonic: "popa", full: "Pop All (16-bit)", operands: "", summary: "Restore all 16-bit general registers.", arch: "x86" },
+    { mnemonic: "popad", full: "Pop All (32-bit)", operands: "", summary: "Restore all 32-bit general registers.", arch: "x86" },
 ];
 
 const registers: NasRegister[] = [
