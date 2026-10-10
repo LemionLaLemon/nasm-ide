@@ -31,7 +31,7 @@ import {
     getRegisterCompletions,
 } from "./nasmData";
 import { DocumentModel, parseDocument, renderSymbolDoc } from "./parser";
-import { getLibcCompletions, getLibcFunction } from "./libcData";
+import { getLibcCompletions, getLibcFunction, renderLibcFunction } from "./libcData";
 import { LibraryIndex } from "./libraries";
 import { listLibraryCandidates } from "./libscan";
 
@@ -358,7 +358,7 @@ connection.onCompletion((params): CompletionItem[] => {
             detail: `libc \u2014 ${fn.header}`,
             documentation: {
                 kind: MarkupKind.Markdown,
-                value: ["```c", fn.signature, "```", "", fn.summary].join("\n"),
+                value: renderLibcFunction(fn),
             },
         });
     }
@@ -452,20 +452,8 @@ connection.onHover((params): Hover | null => {
     }
     const libc = getLibcFunction(lower);
     if (libc) {
-        const lib = libc.header.includes("-lm") ? "-lm" : "-lc";
         return {
-            contents: {
-                kind: MarkupKind.Markdown,
-                value: [
-                    "```c",
-                    libc.signature,
-                    "```",
-                    "",
-                    libc.summary,
-                    "",
-                    `C library (${libc.header}) \u2014 link with \`${lib}\`.`,
-                ].join("\n"),
-            },
+            contents: { kind: MarkupKind.Markdown, value: renderLibcFunction(libc) },
             range: toRange(document, wordRange.start, wordRange.end),
         };
     }

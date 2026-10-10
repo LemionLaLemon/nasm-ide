@@ -61,6 +61,17 @@ function unit() {
     const cands = L.listLibraryCandidates();
     ok(cands.length > 50 && cands.some((c) => c.flag === "c"), `candidates (${cands.length})`);
 
+    const D = require(path.join(SERVER_OUT, "libcData.js"));
+    const all = D.getLibcCompletions("");
+    ok(all.length >= 50, `libc dataset (${all.length})`);
+    ok(D.getLibcFunction("printf").signature.includes("const char *format"), "printf signature");
+    const r = D.renderLibcFunction(D.getLibcFunction("printf"));
+    ok(r.includes("`rdi` - format") && r.includes("`rax` - number of vector") && r.includes("clobber"), "printf ABI render");
+    const s = D.renderLibcFunction(D.getLibcFunction("sqrt"));
+    ok(s.includes("`xmm0` - x:") && s.includes("-lm"), "sqrt uses xmm0 + lm hint");
+    const f = D.renderLibcFunction(D.getLibcFunction("free"));
+    ok(!f.includes("**Returns**") && f.includes("`rdi` - ptr"), "void fn has no Returns");
+
     const { LibraryIndex } = require(path.join(SERVER_OUT, "libraries.js"));
     const idx = new LibraryIndex();
     ok(idx.ensure(["c"]) === true, "index builds");
@@ -156,6 +167,7 @@ async function integration() {
     const hovP = await c.req("textDocument/hover", { textDocument: { uri: `file://${WS}/b.asm` }, position: { line: 1, character: 9 } });
     const hvP = (hovP.result && hovP.result.contents && hovP.result.contents.value) || "";
     ok(hvP.includes("int printf(const char") && hvP.includes("link with `-lc`"), "libc hover with link hint");
+    ok(hvP.includes("System V AMD64") && hvP.includes("`rdi` - format"), "libc hover maps ABI registers");
 
     // candidates request (library picker backend)
     const cands = await c.req("nasmIde/listLibraryCandidates");

@@ -1,3 +1,7 @@
+# 0.1.4
+
+- libc hover/completions render full System V ABI mapping (register per arg, rax vector rule, returns, clobbers) plus per-function return docs.
+
 # 0.1.3
 
 - 57 libc functions (printf, malloc, ...) with C signatures in completions/hover.
