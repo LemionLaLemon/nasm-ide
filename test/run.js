@@ -143,6 +143,20 @@ async function integration() {
     const def = await c.req("textDocument/definition", { textDocument: { uri: `file://${WS}/b.asm` }, position: { line: 4, character: 12 } });
     ok(def.result && def.result.uri === `file://${WS}/a.asm`, "cross-file definition");
 
+    // libc: printf completes with signature + hover shows docs + link hint
+    const pUri = `file://${WS}/p.asm`;
+    c.notify("textDocument/didOpen", {
+        textDocument: { uri: pUri, languageId: "nasm", version: 1, text: "global _start\n_start:\n    call print" },
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    const compP = await c.req("textDocument/completion", { textDocument: { uri: pUri }, position: { line: 2, character: 14 } });
+    const printfItem = (compP.result || []).find((i) => i.label === "printf");
+    ok(!!printfItem && printfItem.detail.includes("stdio.h"), "libc completion for printf");
+    ok(printfItem && printfItem.documentation.value.includes("int printf(const char"), "libc signature in docs");
+    const hovP = await c.req("textDocument/hover", { textDocument: { uri: `file://${WS}/b.asm` }, position: { line: 1, character: 9 } });
+    const hvP = (hovP.result && hovP.result.contents && hovP.result.contents.value) || "";
+    ok(hvP.includes("int printf(const char") && hvP.includes("link with `-lc`"), "libc hover with link hint");
+
     // candidates request (library picker backend)
     const cands = await c.req("nasmIde/listLibraryCandidates");
     ok(Array.isArray(cands.result) && cands.result.some((x) => x.flag === "c"), "listLibraryCandidates request");

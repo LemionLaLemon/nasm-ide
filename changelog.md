@@ -1,3 +1,8 @@
+# 0.1.3
+
+- 57 libc functions (printf, malloc, ...) with C signatures in completions/hover.
+- Full README (architecture, config reference, doc comments).
+
 # 0.1.0
 
 Initial release:

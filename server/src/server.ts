@@ -31,6 +31,7 @@ import {
     getRegisterCompletions,
 } from "./nasmData";
 import { DocumentModel, parseDocument, renderSymbolDoc } from "./parser";
+import { getLibcCompletions, getLibcFunction } from "./libcData";
 import { LibraryIndex } from "./libraries";
 import { listLibraryCandidates } from "./libscan";
 
@@ -331,8 +332,7 @@ connection.onCompletion((params): CompletionItem[] => {
         }
     }
     const seenNames = new Set(items.map((i) => i.label.toLowerCase()));
-    for (const [key, entries] of workspaceIndex) {
-        if ((lowerPrefix && !key.startsWith(lowerPrefix)) || !entries.length || seenNames.has(key)) {
+    for (const [key, entries] of workspaceIndex) {        if ((lowerPrefix && !key.startsWith(lowerPrefix)) || !entries.length || seenNames.has(key)) {
             continue;
         }
         seenNames.add(key);
@@ -345,6 +345,20 @@ connection.onCompletion((params): CompletionItem[] => {
             documentation: {
                 kind: MarkupKind.Markdown,
                 value: `${renderSymbolDoc(first)}\n\nDefined in \`${origin}\``,
+            },
+        });
+    }
+    for (const fn of getLibcCompletions(lowerPrefix)) {
+        if (seenNames.has(fn.name.toLowerCase())) {
+            continue;
+        }
+        items.push({
+            label: fn.name,
+            kind: CompletionItemKind.Function,
+            detail: `libc \u2014 ${fn.header}`,
+            documentation: {
+                kind: MarkupKind.Markdown,
+                value: ["```c", fn.signature, "```", "", fn.summary].join("\n"),
             },
         });
     }
@@ -433,6 +447,25 @@ connection.onHover((params): Hover | null => {
         }
         return {
             contents: { kind: MarkupKind.Markdown, value: parts.join("\n") },
+            range: toRange(document, wordRange.start, wordRange.end),
+        };
+    }
+    const libc = getLibcFunction(lower);
+    if (libc) {
+        const lib = libc.header.includes("-lm") ? "-lm" : "-lc";
+        return {
+            contents: {
+                kind: MarkupKind.Markdown,
+                value: [
+                    "```c",
+                    libc.signature,
+                    "```",
+                    "",
+                    libc.summary,
+                    "",
+                    `C library (${libc.header}) \u2014 link with \`${lib}\`.`,
+                ].join("\n"),
+            },
             range: toRange(document, wordRange.start, wordRange.end),
         };
     }
