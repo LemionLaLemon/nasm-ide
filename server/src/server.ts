@@ -35,7 +35,7 @@ import { getLibcCompletions, getLibcFunction, renderLibcFunction } from "./libcD
 import { LibraryIndex } from "./libraries";
 import { listLibraryCandidates } from "./libscan";
 import { buildHeaderIndex, HeaderFunction, manSummary, renderHeaderFunction } from "./headerdocs";
-import { analyzeStack } from "./stackcheck";
+import { analyzeStack, pairPushPop } from "./stackcheck";
 
 interface DiagnosticsSettings {
     enable: boolean;
@@ -131,6 +131,13 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
             },
             hoverProvider: true,
             definitionProvider: true,
+            semanticTokensProvider: {
+                legend: {
+                    tokenTypes: ["keyword"],
+                    tokenModifiers: ["pair0", "pair1", "pair2", "pair3", "pair4", "pair5"],
+                },
+                full: true,
+            },
         },
     };
     refreshWorkspaceIndex();
@@ -826,6 +833,35 @@ function publishMergedDiagnostics(doc: TextDocument): void {
     const cached = nasmDiagnosticsCache.get(doc.uri) || [];
     connection.sendDiagnostics({ uri: doc.uri, diagnostics: [...cached, ...getWorkspaceDiagnostics(doc)] });
 }
+
+connection.onRequest(
+    "textDocument/semanticTokens/full",
+    (params: { textDocument: { uri: string } }): { data: number[] } => {
+        const document = documents.get(params.textDocument.uri);
+        if (!document) {
+            return { data: [] };
+        }
+        const model = documentModels.get(document.uri) ?? parseDocument(document.getText());
+        const tokens = pairPushPop(document.getText(), model)
+            .map((t) => ({ ...t, color: t.pair % 6 }))
+            .sort((a, b) => (a.line === b.line ? a.character - b.character : a.line - b.line));
+        const data: number[] = [];
+        let prevLine = 0;
+        let prevChar = 0;
+        for (const t of tokens) {
+            data.push(
+                t.line - prevLine,
+                t.line === prevLine ? t.character - prevChar : t.character,
+                t.length,
+                0,
+                1 << t.color
+            );
+            prevLine = t.line;
+            prevChar = t.character;
+        }
+        return { data };
+    }
+);
 
 documents.listen(connection);
 connection.listen();

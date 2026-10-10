@@ -2,7 +2,7 @@
     "name": "nasm-ide",
     "displayName": "NASM IDE",
     "description": "Language Server Protocol-based IntelliSense, hover docs, cross-file extern support, library-aware diagnostics, and build tasks for NASM-style x86/x86_64 assembly.",
-    "version": "0.1.9",
+    "version": "0.2.0",
     "publisher": "lemion",
     "author": {
         "name": "lemion"
@@ -180,8 +180,33 @@
                 "title": "NASM IDE: Pick Link Libraries"
             }
         ],
-        "taskDefinitions": [
+        "semanticTokenModifiers": [
             {
+                "id": "pair0",
+                "description": "First stack push/pop pair depth (outermost)."
+            },
+            {
+                "id": "pair1",
+                "description": "Second stack push/pop pair depth."
+            },
+            {
+                "id": "pair2",
+                "description": "Third stack push/pop pair depth."
+            },
+            {
+                "id": "pair3",
+                "description": "Fourth stack push/pop pair depth."
+            },
+            {
+                "id": "pair4",
+                "description": "Fifth stack push/pop pair depth."
+            },
+            {
+                "id": "pair5",
+                "description": "Sixth stack push/pop pair depth (cycles after this)."
+            }
+        ],
+        "taskDefinitions": [            {
                 "type": "nasm-ide",
                 "required": [
                     "operation"

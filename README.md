@@ -81,6 +81,26 @@ Force symbol yellow in any theme (`settings.json`):
 - Any push/pop left unmatched by whole-function linear pairing: **error**
   on that line (the "can't find its pair" dark red).
 
+### Pair colors (FILO)
+
+Every push gets the next color in a 6-color cycle; each pop wears its
+matching push's color (nesting-adjacent depths are maximally separated).
+Unmatched lines keep their push/pop color plus the red squiggle. Colors are
+user-configurable (`settings.json`):
+
+```json
+"editor.semanticTokenColorCustomizations": {
+    "rules": {
+        "*.pair0": "#4EC9B0",
+        "*.pair1": "#61AFEF",
+        "*.pair2": "#E06C9E",
+        "*.pair3": "#D19A66",
+        "*.pair4": "#56B6C2",
+        "*.pair5": "#A9DC76"
+    }
+}
+```
+
 This is a pairing heuristic, not dataflow analysis: branchy functions
 where a push on one path pairs with a pop on another can flag correct code.
 Disable per-workspace with `nasmIde.diagnostics.stackCheck: false`.

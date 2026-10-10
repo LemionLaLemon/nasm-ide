@@ -364,6 +364,24 @@ async function integration() {
     });
     ok(st.length >= 2, "stack imbalance reported as-you-type");
 
+    // semantic pair tokens: pushes 0..2, pops mirror 2..0
+    const sem = await c.req("textDocument/semanticTokens/full", { textDocument: { uri: stUri } });
+    const data = (sem.result && sem.result.data) || [];
+    const byLine = new Map();
+    let line = 0;
+    let ch = 0;
+    for (let i = 0; i + 4 < data.length + 1; i += 5) {
+        const dl = data[i];
+        const dc = data[i + 1];
+        line += dl;
+        ch = dl === 0 ? ch + dc : dc;
+        const mods = data[i + 4];
+        byLine.set(line, Math.round(Math.log2(mods)));
+    }
+    // st.asm: draw: / push rbx / push r12 / ret  -> pairs 0,1 ; ret has none
+    ok(byLine.get(1) === 0 && byLine.get(2) === 1, "pushes get successive pair colors");
+    ok(!byLine.has(3), "ret gets no pair token");
+
     // conflict: duplicate global in new file
     fs.writeFileSync(`${WS}/c.asm`, ["global calcStrExpr", "calcStrExpr:", "    ret", ""].join("\n"));
     c.notify("textDocument/didOpen", {

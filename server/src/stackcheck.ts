@@ -42,8 +42,18 @@ function firstToken(raw: string): string {
     return m ? m[1].toLowerCase() : "";
 }
 
+/** Offset and length of the leading word (mnemonic position for tokens). */
+export function leadingWord(raw: string): { character: number; length: number } | null {
+    const { code } = splitComment(raw);
+    const m = /^(\s*)([A-Za-z_.$][\w.$]*)/.exec(code);
+    if (!m) {
+        return null;
+    }
+    return { character: m[1].length, length: m[2].length };
+}
+
 /** Line numbers (ascending) that start new straight-line runs. */
-function runBoundaries(lines: string[], model: DocumentModel): number[] {
+export function runBoundaries(lines: string[], model: DocumentModel): number[] {
     const bounds = new Set<number>([0, lines.length]);
     for (const sym of model.symbols) {
         if (sym.kind === "label" && !sym.name.startsWith(".")) {
@@ -59,6 +69,57 @@ function isRet(tok: string): boolean {
 
 function isUnconditionalJump(tok: string): boolean {
     return tok === "jmp";
+}
+
+export interface PairToken {
+    line: number;
+    character: number;
+    length: number;
+    /** Nesting depth Columbine index; render as pair{index % 6}. */
+    pair: number;
+}
+
+/**
+ * FILO pair coloring: every push gets the next color, every pop wears its
+ * matching push's color. Shared slot-accurate LIFO simulation so colors
+ * always agree with analyzeStack diagnostics (unmatched lines get no pair
+ * and keep their TextMate color plus the red squiggle).
+ */
+export function pairPushPop(text: string, model: DocumentModel): PairToken[] {
+    const out: PairToken[] = [];
+    const lines = text.split(/\r?\n/);
+    const bounds = runBoundaries(lines, model);
+    for (let s = 0; s < bounds.length - 1; s++) {
+        const start = bounds[s];
+        const end = bounds[s + 1];
+        const slots: Array<{ line: number; order: number }> = [];
+        let order = 0;
+        const pairOf = new Map<number, number>();
+        for (let i = start; i < end; i++) {
+            const tok = firstToken(lines[i]);
+            if (tok in PUSH_SLOTS) {
+                const size = PUSH_SLOTS[tok];
+                for (let k = 0; k < size; k++) {
+                    slots.push({ line: i, order });
+                }
+                pairOf.set(i, order);
+                order++;
+            } else if (tok in POP_SLOTS) {
+                const size = POP_SLOTS[tok];
+                if (slots.length >= size) {
+                    const matched = slots.splice(slots.length - size, size);
+                    pairOf.set(i, matched[matched.length - 1].order);
+                }
+            }
+        }
+        for (const [line, pair] of pairOf) {
+            const pos = leadingWord(lines[line]);
+            if (pos) {
+                out.push({ line, character: pos.character, length: pos.length, pair });
+            }
+        }
+    }
+    return out;
 }
 
 export function analyzeStack(text: string, model: DocumentModel): StackIssue[] {

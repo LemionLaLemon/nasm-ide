@@ -1,3 +1,7 @@
+# 0.2.0
+
+- FILO pair coloring via semantic tokens: each push cycles 6 colors, each pop wears its matching push's color.
+
 # 0.1.9
 
 - Stack pairing analysis: push/pop families highlighted distinctly, unpaired pushes/pops and unbalanced rets are errors.
