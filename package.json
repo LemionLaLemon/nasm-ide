@@ -1,0 +1,208 @@
+{
+    "name": "nasm-ide",
+    "displayName": "NASM IDE",
+    "description": "Language Server Protocol-based IntelliSense, hover docs, cross-file extern support, library-aware diagnostics, and build tasks for NASM-style x86/x86_64 assembly.",
+    "version": "0.1.0",
+    "publisher": "lemion",
+    "author": {
+        "name": "lemion"
+    },
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/lemion/nasm-ide.git"
+    },
+    "bugs": {
+        "url": "https://github.com/lemion/nasm-ide/issues"
+    },
+    "homepage": "https://github.com/lemion/nasm-ide#readme",
+    "keywords": [
+        "assembly",
+        "x86",
+        "x64",
+        "nasm",
+        "intel",
+        "asm",
+        "linker"
+    ],
+    "engines": {
+        "vscode": "^1.85.0"
+    },
+    "categories": [
+        "Programming Languages"
+    ],
+    "activationEvents": [
+        "onLanguage:nasm"
+    ],
+    "main": "./out/extension.js",
+    "contributes": {
+        "languages": [
+            {
+                "id": "nasm",
+                "aliases": [
+                    "NASM",
+                    "nasm",
+                    "x86 Assembly"
+                ],
+                "extensions": [
+                    ".asm",
+                    ".nasm",
+                    ".inc"
+                ],
+                "configuration": "./language-configuration.json"
+            }
+        ],
+        "grammars": [
+            {
+                "language": "nasm",
+                "scopeName": "source.nasm",
+                "path": "./syntaxes/nasm.tmLanguage.json"
+            }
+        ],
+        "configuration": {
+            "title": "NASM IDE",
+            "properties": {
+                "nasmIde.nasmPath": {
+                    "type": "string",
+                    "default": "nasm",
+                    "description": "Path to the nasm assembler executable."
+                },
+                "nasmIde.arch": {
+                    "type": "string",
+                    "enum": [
+                        "x86",
+                        "x86_64"
+                    ],
+                    "default": "x86_64",
+                    "description": "Target architecture used when running nasm for diagnostics (elf32 vs elf64)."
+                },
+                "nasmIde.diagnostics.enable": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Enable nasm + workspace diagnostics."
+                },
+                "nasmIde.diagnostics.mode": {
+                    "type": "string",
+                    "enum": [
+                        "asYouType",
+                        "onSave"
+                    ],
+                    "default": "asYouType",
+                    "description": "asYouType runs nasm in the background (debounced) as you edit; onSave only runs on save."
+                },
+                "nasmIde.diagnostics.debounceMs": {
+                    "type": "integer",
+                    "default": 400,
+                    "minimum": 0,
+                    "maximum": 5000,
+                    "description": "Debounce delay in milliseconds before as-you-type diagnostics run."
+                },
+                "nasmIde.diagnostics.unresolvedExterns": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Warn on `extern` symbols defined neither in the workspace nor in any configured library."
+                },
+                "nasmIde.libraries": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "default": [
+                        "c"
+                    ],
+                    "description": "Link libraries as -l flags without the prefix (e.g. \"c\" for -lc). Used for unresolved-extern detection and build/link tasks. Use the \"NASM IDE: Pick Link Libraries\" command to search your system."
+                },
+                "nasmIde.build.linker": {
+                    "type": "string",
+                    "enum": [
+                        "ld",
+                        "gcc"
+                    ],
+                    "default": "ld",
+                    "description": "Linker used by the nasm-ide build task."
+                },
+                "nasmIde.build.sources": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "default": [
+                        "src/*.asm"
+                    ],
+                    "description": "Globs (relative to the workspace folder) of assembly sources to assemble and link."
+                },
+                "nasmIde.build.objDir": {
+                    "type": "string",
+                    "default": "obj",
+                    "description": "Directory (relative to the workspace folder) for intermediate .o files."
+                },
+                "nasmIde.build.output": {
+                    "type": "string",
+                    "default": "bin/${workspaceFolderBasename}",
+                    "description": "Linked output binary path (relative to the workspace folder)."
+                },
+                "nasmIde.build.extraLdFlags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "default": [],
+                    "description": "Extra flags passed to the linker (e.g. [\"-dynamic-linker\", \"/lib64/ld-linux-x86-64.so.2\"])."
+                }
+            }
+        },
+        "commands": [
+            {
+                "command": "nasmIde.restartServer",
+                "title": "NASM IDE: Restart Language Server"
+            },
+            {
+                "command": "nasmIde.showServerStatus",
+                "title": "NASM IDE: Show Server Status"
+            },
+            {
+                "command": "nasmIde.toggleDiagnostics",
+                "title": "NASM IDE: Toggle Diagnostics"
+            },
+            {
+                "command": "nasmIde.pickLibraries",
+                "title": "NASM IDE: Pick Link Libraries"
+            }
+        ],
+        "taskDefinitions": [
+            {
+                "type": "nasm-ide",
+                "required": [
+                    "operation"
+                ],
+                "properties": {
+                    "operation": {
+                        "type": "string",
+                        "enum": [
+                            "build",
+                            "run",
+                            "clean"
+                        ],
+                        "description": "The nasm-ide task operation."
+                    }
+                }
+            }
+        ]
+    },
+    "scripts": {
+        "compile": "tsc -p ./ && tsc -p ./server",
+        "compile:client": "tsc -p ./",
+        "compile:server": "tsc -p ./server",
+        "watch": "tsc -watch -p ./ & tsc -watch -p ./server",
+        "package": "npx -y @vscode/vsce package",
+        "test": "node ./test/run.js && node ./test/client.js"
+    },
+    "devDependencies": {
+        "@types/node": "^20.19.43",
+        "@types/vscode": "^1.85.0",
+        "typescript": "^5.6.0"
+    },
+    "dependencies": {
+        "vscode-languageclient": "^9.0.0"
+    }
+}

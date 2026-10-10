@@ -1,0 +1,5 @@
+node_modules/
+out/
+server/node_modules/
+server/out/
+*.vsix

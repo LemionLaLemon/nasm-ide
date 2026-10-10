@@ -1,0 +1,119 @@
+{
+  "name": "NASM",
+  "scopeName": "source.nasm",
+  "fileTypes": [
+    "asm",
+    "nasm"
+  ],
+  "patterns": [
+    {
+      "include": "#comment"
+    },
+    {
+      "include": "#label"
+    },
+    {
+      "include": "#directive"
+    },
+    {
+      "include": "#instruction"
+    },
+    {
+      "include": "#register"
+    },
+    {
+      "include": "#number"
+    },
+    {
+      "include": "#string"
+    }
+  ],
+  "repository": {
+    "comment": {
+      "patterns": [
+        {
+          "name": "comment.line.semicolon.nasm",
+          "match": ";.*$"
+        }
+      ]
+    },
+    "label": {
+      "patterns": [
+        {
+          "name": "entity.name.label.nasm",
+          "match": "^[ \\t]*([A-Za-z_.$][A-Za-z0-9_.$]*)\\s*:"
+        }
+      ]
+    },
+    "directive": {
+      "patterns": [
+        {
+          "name": "keyword.control.directive.nasm",
+          "match": "^[ \\t]*((section|segment|global|extern|equ|org|times|bits|default|align|incbin|struc|endstruc|option)\\b|%(define|xdefine|idefine|undef|assign|ifdef|ifndef|if|elif|else|endif|include|macro|endmacro|rep|endrep)\\b)"
+        },
+        {
+          "name": "storage.type.data.nasm",
+          "match": "\\b(d[bwdqtyz]|res[bwdqtyz])\\b"
+        }
+      ]
+    },
+    "instruction": {
+      "patterns": [
+        {
+          "name": "keyword.instruction.nasm",
+          "match": "(?i)\\b(mov|lea|add|sub|mul|imul|div|idiv|and|or|xor|not|shl|shr|sar|rol|ror|cmp|test|jmp|je|jne|jg|jge|jl|jle|call|ret|push|pop|syscall|xchg|bswap|movsx|movzx|movsxd|cbw|cwde|cdqe|cwd|cdq|cqo|cmov|cmova|cmovae|cmovb|cmovbe|cmovc|cmove|cmovg|cmovge|cmovl|cmovle|cmovna|cmovnae|cmovnb|cmovnbe|cmovnc|cmovne|cmovng|cmovnge|cmovnl|cmovnle|cmovno|cmovnp|cmovns|cmovnz|cmovo|cmovp|cmovpe|cmovpo|cmovs|cmovz|movs|movsb|movsw|movsd|movsq|enter|leave|pushf|pushfd|pushfq|popf|popfd|popfq|pushad|popad|pusha|popa|neg|xadd|adc|sbb|daa|das|ja|jae|jb|jbe|jc|jnc|jz|jnz|js|jns|jo|jno|jp|jnp|jpe|jpo|jecxz|jrcxz|jcxz|loop|loope|loopne|loopz|loopnz|seta|setae|setb|setbe|setc|sete|setg|setge|setl|setle|setna|setnae|setnb|setnbe|setnc|setne|setng|setnge|setnl|setnle|setno|setnp|setns|setnz|seto|setp|setpe|setpo|sets|setz|stos|stosb|stosw|stosd|stosq|lods|lodsb|lodsw|lodsd|lodsq|scas|scasb|scasw|scasd|scasq|cmps|cmpsb|cmpsw|cmpsd|cmpsq|rep|repe|repz|repne|repnz|clc|stc|cmc|cld|std|cli|sti|lahf|sahf|int|int3|into|iret|iretd|iretq|nop|hlt|pause|cpuid|rdtsc|rdpmc|xgetbv|mfence|lfence|sfence|lock|in|out|ins|insb|insw|insd|outs|outsb|outsw|outsd|sysenter|sysexit|sysret|ud2|movaps|movups|movapd|movupd|movdqa|movdqu|movd|movq|addps|addpd|subps|subpd|mulps|mulpd|divps|divpd|sqrtps|xorps|xorpd|andps|andpd|orps|orpd|pxor|pand|por|paddb|paddw|paddd|paddq|psubb|psubw|psubd|psubq|pcmpeqb|pcmpeqw|pcmpeqd|cvtsi2ss|cvtsi2sd|cvtss2si|cvtsd2si|cvttss2si|cvttsd2si|ucomiss|ucomisd|comiss|vmovaps|vmovups|vaddps|vxorps|vpaddd|vpxor|addss|addsd|subss|subsd|mulss|mulsd|divss|divsd|sqrtss|sqrtsd|maxss|maxsd|minss|minsd|rcpss|rsqrtss|rcpps|rsqrtps|andnps|andnpd|comiss|comisd|movss|movsd|movsw|movlps|movhps|movlpd|movhpd|movmskps|movmskpd|shufps|shufpd|unpcklps|unpckhps|cvtss2sd|cvtsd2ss|cvtps2pd|cvtpd2ps|cvtdq2ps|cvtps2dq|fld|fst|fstp|fild|fist|fistp|fadd|fsub|fsubr|fmul|fdiv|fdivr|faddp|fsubp|fsubrp|fmulp|fdivp|fdivrp|fchs|fabs|fsqrt|fcom|fcomp|fcompp|fxch|fldz|fld1|fldpi|fldcw|fstcw|fstsw|finit|fninit|fclex|fcos|fsin|fptan|fpatan|fyl2x|f2xm1|fscale|frndint|ftst|fxam|vaddsd|vaddss|vsubsd|vmulsd|vmulss|vdivsd|vsqrtsd|vmovsd|vmovss|vucomisd|vandpd|vxorpd)\\b"
+        }
+      ]
+    },
+    "register": {
+      "patterns": [
+        {
+          "name": "variable.language.register.nasm",
+          "match": "(?i)\\b(r1[0-5]|r[0-9]|rax|rbx|rcx|rdx|rsi|rdi|rbp|rsp|r8|r9|r10|r11|r12|r13|r14|r15|eax|ebx|ecx|edx|esi|edi|ebp|esp|ax|bx|cx|dx|si|di|bp|sp|al|ah|bl|bh|cl|ch|dl|dh|cs|ds|es|fs|gs|ss|eflags|rflags|spl|bpl|sil|dil|r8l|r9l|r10l|r11l|r12l|r13l|r14l|r15l|r8d|r9d|r10d|r11d|r12d|r13d|r14d|r15d|r8w|r9w|r10w|r11w|r12w|r13w|r14w|r15w|r8b|r9b|r10b|r11b|r12b|r13b|r14b|r15b|eip|rip|xmm0|xmm1|xmm2|xmm3|xmm4|xmm5|xmm6|xmm7|xmm8|xmm9|xmm10|xmm11|xmm12|xmm13|xmm14|xmm15|ymm0|ymm1|ymm2|ymm3|ymm4|ymm5|ymm6|ymm7|ymm8|ymm9|ymm10|ymm11|ymm12|ymm13|ymm14|ymm15|st0|st1|st2|st3|st4|st5|st6|st7|mm0|mm1|mm2|mm3|mm4|mm5|mm6|mm7|cr0|cr2|cr3|cr4|dr0|dr1|dr2|dr3|dr6|dr7)\\b"
+        }
+      ]
+    },
+    "number": {
+      "patterns": [
+        {
+          "name": "constant.numeric.hex.nasm",
+          "match": "\\b0x[0-9A-Fa-f]+\\b"
+        },
+        {
+          "name": "constant.numeric.hex.nasm",
+          "match": "\\b[0-9A-Fa-f]+[hH]\\b"
+        },
+        {
+          "name": "constant.numeric.decimal.nasm",
+          "match": "\\b[0-9]+\\b"
+        }
+      ]
+    },
+    "string": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.nasm",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.nasm",
+              "match": "\\\\."
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.single.nasm",
+          "begin": "'",
+          "end": "'",
+          "patterns": [
+            {
+              "name": "constant.character.escape.nasm",
+              "match": "\\\\."
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

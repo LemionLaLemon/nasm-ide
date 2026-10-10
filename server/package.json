@@ -1,0 +1,19 @@
+{
+    "name": "nasm-ide-server",
+    "version": "0.1.0",
+    "private": true,
+    "description": "Language server for the NASM IDE extension.",
+    "main": "./out/server.js",
+    "scripts": {
+        "compile": "tsc -p ./",
+        "watch": "tsc -watch -p ./"
+    },
+    "dependencies": {
+        "vscode-languageserver": "^9.0.0",
+        "vscode-languageserver-textdocument": "^1.0.11"
+    },
+    "devDependencies": {
+        "@types/node": "^20.19.43",
+        "typescript": "^5.6.0"
+    }
+}
