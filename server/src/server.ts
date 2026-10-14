@@ -30,7 +30,7 @@ import {
     getRegister,
     getRegisterCompletions,
 } from "./nasmData";
-import { DocumentModel, parseDocument, renderSymbolDoc } from "./parser";
+import { DocumentModel, StrucDef, StrucMember, parseDocument, renderSymbolDoc, strucSizeBrief } from "./parser";
 import { getLibcCompletions, getLibcFunction, renderLibcFunction } from "./libcData";
 import { LibraryIndex } from "./libraries";
 import { listLibraryCandidates } from "./libscan";
@@ -428,6 +428,119 @@ connection.onCompletion((params): CompletionItem[] => {
             },
         });
     }
+    // Struct member access (`Name.` or `Name.mem`): the word range includes
+    // dots, so split at the last one and complete members only.
+    const dotAt = lowerPrefix.lastIndexOf(".");
+    if (dotAt > 0) {
+        const strucPart = lowerPrefix.slice(0, dotAt);
+        const typedStruc = prefix.slice(0, dotAt);
+        const memberPrefix = lowerPrefix.slice(dotAt + 1);
+        const hits = findStruc(strucPart, model, document.uri);
+        if (hits.length > 0) {
+            const seenM = new Set<string>();
+            for (const { def } of hits) {
+                for (const m of def.members) {
+                    const bLower = m.bare.toLowerCase();
+                    const dedupe = def.name.toLowerCase() + "." + bLower;
+                    if (!bLower.startsWith(memberPrefix) || seenM.has(dedupe)) {
+                        continue;
+                    }
+                    seenM.add(dedupe);
+                    items.push({
+                        label: `${def.name}${m.name.startsWith(".") ? m.name : "." + m.name}`,
+                        filterText: `${typedStruc}.${m.bare}`,
+                        kind:
+                            m.kind === "field"
+                                ? CompletionItemKind.Field
+                                : CompletionItemKind.Constant,
+                        detail:
+                            m.kind === "field"
+                                ? m.size !== null
+                                    ? `${sizeName(m.size)} field @ +${m.offset}`
+                                    : `field @ +${m.offset}`
+                                : m.value
+                                  ? `= ${m.value}`
+                                  : "struc constant",
+                        documentation: {
+                            kind: MarkupKind.Markdown,
+                            value: renderStrucMember(def.name, m),
+                        },
+                    });
+                }
+            }
+            return items;
+        }
+    } else if (!lowerPrefix.includes(".")) {
+        // Bare struct names complete as types.
+        const offerStruc = (def: StrucDef, origin?: string): void => {
+            if (
+                (lowerPrefix && !def.name.toLowerCase().startsWith(lowerPrefix)) ||
+                seenNames.has(def.name.toLowerCase())
+            ) {
+                return;
+            }
+            seenNames.add(def.name.toLowerCase());
+            items.push({
+                label: def.name,
+                kind: CompletionItemKind.Class,
+                detail: `struc \u2014 ${def.members.length} members, ${def.totalSize} bytes${origin ? ` \u2014 ${origin}` : ""}`,
+                documentation: {
+                    kind: MarkupKind.Markdown,
+                    value: renderStruc(def, origin),
+                },
+            });
+        };
+        if (model) {
+            for (const def of model.strucs || []) {
+                offerStruc(def);
+            }
+        }
+        for (const arr of workspaceStrucs.values()) {
+            if (arr.length > 0) {
+                offerStruc(arr[0].def, path.basename(fileUriToPath(arr[0].uri)));
+            }
+        }
+        // Auto-generated `Name_size` constants from workspace strucs.
+        {
+            const seenSize = new Set<string>();
+            const offerSize = (def: StrucDef, origin?: string): void => {
+                const label = `${def.name}_size`;
+                if (
+                    (lowerPrefix && !label.toLowerCase().startsWith(lowerPrefix)) ||
+                    seenNames.has(label.toLowerCase()) ||
+                    seenSize.has(label.toLowerCase())
+                ) {
+                    return;
+                }
+                seenNames.add(label.toLowerCase());
+                seenSize.add(label.toLowerCase());
+                items.push({
+                    label,
+                    kind: CompletionItemKind.Constant,
+                    detail: `struc size \u2014 ${def.totalSize} bytes${origin ? ` \u2014 ${origin}` : ""}`,
+                    documentation: {
+                        kind: MarkupKind.Markdown,
+                        value: renderStrucSize(def, origin),
+                    },
+                });
+            };
+            const sizeHit = findStrucSize(lowerPrefix, model, document.uri);
+            if (sizeHit) {
+                offerSize(sizeHit.def);
+            } else {
+                if (model) {
+                    for (const def of model.strucs || []) {
+                        offerSize(def);
+                    }
+                }
+                for (const arr of workspaceStrucs.values()) {
+                    if (arr.length > 0) {
+                        offerSize(arr[0].def, path.basename(fileUriToPath(arr[0].uri)));
+                    }
+                }
+            }
+        }
+    }
     return items;
 });
 
@@ -523,6 +636,51 @@ connection.onHover((params): Hover | null => {
             range: toRange(document, wordRange.start, wordRange.end),
         };
     }
+    if (lower.includes(".")) {
+        const di = lower.lastIndexOf(".");
+        const hits = findStruc(lower.slice(0, di), model, document.uri);
+        if (hits.length > 0) {
+            const first = hits[0];
+            const mem = first.def.members.find((m) => m.bare.toLowerCase() === lower.slice(di + 1));
+            if (mem) {
+                const origin =
+                    fileUriToPath(first.uri) === fileUriToPath(document.uri)
+                        ? undefined
+                        : path.basename(fileUriToPath(first.uri));
+                return {
+                    contents: {
+                        kind: MarkupKind.Markdown,
+                        value: renderStrucMember(first.def.name, mem, origin),
+                    },
+                    range: toRange(document, wordRange.start, wordRange.end),
+                };
+            }
+        }
+    } else {
+        const hits = findStruc(lower, model, document.uri);
+        if (hits.length > 0) {
+            const first = hits[0];
+            const origin =
+                fileUriToPath(first.uri) === fileUriToPath(document.uri)
+                    ? undefined
+                    : path.basename(fileUriToPath(first.uri));
+            return {
+                contents: { kind: MarkupKind.Markdown, value: renderStruc(first.def, origin) },
+                range: toRange(document, wordRange.start, wordRange.end),
+            };
+        }
+        const sizeHit = findStrucSize(lower, model, document.uri);
+        if (sizeHit) {
+            const origin =
+                fileUriToPath(sizeHit.uri) === fileUriToPath(document.uri)
+                    ? undefined
+                    : path.basename(fileUriToPath(sizeHit.uri));
+            return {
+                contents: { kind: MarkupKind.Markdown, value: renderStrucSize(sizeHit.def, origin) },
+                range: toRange(document, wordRange.start, wordRange.end),
+            };
+        }
+    }
     const headerEntries = headerFunctions.get(lower);
     if (headerEntries && headerEntries.length > 0) {
         return {
@@ -564,6 +722,34 @@ connection.onDefinition((params): Definition | null => {
                 },
             };
             return location;
+        }
+        if (lower.includes(".")) {
+            const di = lower.lastIndexOf(".");
+            const hits = findStruc(lower.slice(0, di), model, document.uri);
+            if (hits.length > 0) {
+                const mem = hits[0].def.members.find((m) => m.bare.toLowerCase() === lower.slice(di + 1));
+                if (mem) {
+                    const memLocation: Location = {
+                        uri: hits[0].uri,
+                        range: {
+                            start: { line: mem.line, character: mem.character },
+                            end: { line: mem.line, character: mem.character + mem.name.length },
+                        },
+                    };
+                    return memLocation;
+                }
+            }
+        } else {
+            const sizeHit = findStrucSize(lower, model, document.uri);
+            if (sizeHit) {
+                return {
+                    uri: sizeHit.uri,
+                    range: {
+                        start: { line: sizeHit.def.endLine, character: 0 },
+                        end: { line: sizeHit.def.endLine, character: sizeHit.def.name.length + 5 },
+                    },
+                };
+            }
         }
         return null;
     }
@@ -701,6 +887,7 @@ function indexModel(uri: string, model: DocumentModel): void {
 
 function refreshWorkspaceIndex(): void {
     workspaceIndex.clear();
+    workspaceStrucs.clear();
     const live = openDocsByPath();
     for (const file of collectWorkspaceFiles(scanRoots())) {
         let text = live.get(file);
@@ -715,7 +902,10 @@ function refreshWorkspaceIndex(): void {
             }
         }
         try {
-            indexModel("file://" + encodeURI(file), parseDocument(text));
+            const uri = "file://" + encodeURI(file);
+            const model = parseDocument(text);
+            indexModel(uri, model);
+            indexStrucs(uri, model);
         } catch {
             // ignore unparseable files
         }
@@ -735,6 +925,7 @@ function refreshFileInIndex(uri: string, liveText?: string): void {
             workspaceIndex.delete(key);
         }
     }
+    dropUriStrucs(uri, file);
     let text = liveText;
     if (text === undefined) {
         try {
@@ -744,14 +935,143 @@ function refreshFileInIndex(uri: string, liveText?: string): void {
         }
     }
     try {
-        indexModel(uri, parseDocument(text));
+        const model = parseDocument(text);
+        indexModel(uri, model);
+        indexStrucs(uri, model);
     } catch {
         // ignore
     }
 }
 
-function pickIndexEntry(entries: IndexEntry[]): IndexEntry {
-    for (const e of entries) {
+interface StrucEntry {
+    def: StrucDef;
+    uri: string;
+}
+
+const workspaceStrucs = new Map<string, StrucEntry[]>();
+
+function indexStrucs(uri: string, model: DocumentModel): void {
+    for (const def of model.strucs || []) {
+        const key = def.name.toLowerCase();
+        const arr = workspaceStrucs.get(key) || [];
+        arr.push({ def, uri });
+        workspaceStrucs.set(key, arr);
+    }
+}
+
+function dropUriStrucs(uri: string, file: string): void {
+    for (const [key, arr] of workspaceStrucs) {
+        const kept = arr.filter((e) => e.uri !== uri && fileUriToPath(e.uri) !== file);
+        if (kept.length) {
+            workspaceStrucs.set(key, kept);
+        } else {
+            workspaceStrucs.delete(key);
+        }
+    }
+}
+
+/** Local strucs first, then workspace ones (excluding this document's own, already covered). */
+function findStruc(name: string, model: DocumentModel | undefined, docUri: string): StrucEntry[] {
+    const key = name.toLowerCase();
+    const out: StrucEntry[] = [];
+    if (model) {
+        for (const def of model.strucs || []) {
+            if (def.name.toLowerCase() === key) {
+                out.push({ def, uri: docUri });
+            }
+        }
+    }
+    for (const e of workspaceStrucs.get(key) || []) {
+        if (fileUriToPath(e.uri) !== fileUriToPath(docUri)) {
+            out.push(e);
+        }
+    }
+    return out;
+}
+
+/** Resolve `Name_size` against local + workspace struc definitions. */
+function findStrucSize(
+    lower: string,
+    model: DocumentModel | undefined,
+    docUri: string
+): { def: StrucDef; uri: string } | null {
+    const m = /^(.*)_size$/.exec(lower);
+    if (!m) {
+        return null;
+    }
+    const hits = findStruc(m[1], model, docUri);
+    return hits.length > 0 ? hits[0] : null;
+}
+
+function renderStrucSize(def: StrucDef, origin?: string): string {
+    const lines = ["```nasm", `${def.name}_size`, "```", "", strucSizeBrief(def)];
+    if (origin) {
+        lines.push("", `Defined in \`${origin}\`.`);
+    }
+    return lines.join("\n");
+}
+
+function sizeName(size: number | null): string {
+    switch (size) {
+        case 1:
+            return "byte";
+        case 2:
+            return "word";
+        case 4:
+            return "dword";
+        case 8:
+            return "qword";
+        case 10:
+            return "tword";
+        case 16:
+            return "oword";
+        case 32:
+            return "yword";
+        case 64:
+            return "zword";
+        default:
+            return size === null ? "" : `${size} bytes`;
+    }
+}
+
+function renderStrucMember(strucName: string, m: StrucMember, origin?: string): string {
+    const lines = ["```nasm", `${strucName}.${m.bare}`, "```", ""];
+    if (m.kind === "field") {
+        const dims = [`offset ${m.offset}`, m.size !== null ? `${m.size} byte${m.size === 1 ? "" : "s"} (${sizeName(m.size)})` : "unknown size"];
+        if ((m.count ?? 1) > 1) {
+            dims.push(`× ${m.count}`);
+        }
+        lines.push(`Field of struc \`${strucName}\` — ${dims.join(", ")}.`);
+    } else {
+        lines.push(`Constant \`${strucName}.${m.bare}\`${m.value ? ` = ${m.value}` : ""}.`);
+    }
+    if (m.brief) {
+        lines.push("", m.brief);
+    }
+    if (origin) {
+        lines.push("", `Defined in \`${origin}\`.`);
+    }
+    return lines.join("\n");
+}
+
+function renderStruc(def: StrucDef, origin?: string): string {
+    const lines = ["```nasm", `struc ${def.name}`, "```", ""];
+    lines.push(`${def.members.length} member${def.members.length === 1 ? "" : "s"}, ${def.totalSize} bytes.`);
+    lines.push("");
+    for (const m of def.members) {
+        if (m.kind === "field") {
+            lines.push(`- \`${m.bare}\` — +${m.offset}, ${sizeName(m.size)}`);
+        } else {
+            lines.push(`- \`${m.bare}\`${m.value ? ` = ${m.value}` : ""}`);
+        }
+    }
+    if (origin) {
+        lines.push("", `Defined in \`${origin}\`.`);
+    }
+    return lines.join("\n");
+}
+
+function pickIndexEntry(entries: IndexEntry[]): IndexEntry {    for (const e of entries) {
         const doc = e.doc;
         if (doc && (doc.brief.some((l) => l.trim()) || doc.params.length > 0 || doc.returns.length > 0)) {
             return e;

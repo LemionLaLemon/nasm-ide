@@ -50,6 +50,43 @@ function unit() {
     const g = P.parseDocument("; B\n; @param rdi b\nglobal foo\nfoo:\n ret\n").symbols[0];
     ok(g.doc.brief.join(" ").includes("B"), "docs see through global");
 
+    const SSRC = [
+        "; Buttons.",
+        "struc Button",
+        "    .x resd 1 ; x position",
+        "    .y resd 1",
+        "    .label resq 1",
+        "    .kind equ 0",
+        "endstruc",
+        "",
+        "struc Tool",
+        "    .pencil equ 6",
+        "endstruc",
+        "",
+        "struc XConfigureEvent",
+        "    .type resd 1",
+        "    resb 44",
+        "    .x resd 1",
+        "endstruc",
+    ].join("\n");
+    const sm = P.parseDocument(SSRC);
+    ok(sm.strucs.length === 3, "three strucs parsed");
+    const btn = sm.strucs[0];
+    ok(btn.totalSize === 16, "Button is 16 bytes");
+    ok(
+        btn.members.map((m) => `${m.name}@${m.offset}`).join(" ") === ".x@0 .y@4 .label@8 .kind@null",
+        "member offsets: " + btn.members.map((m) => `${m.name}@${m.offset}`).join(" ")
+    );
+    ok(btn.members[0].brief === "x position" && btn.members[0].size === 4, "trailing comment + size");
+    ok(btn.members[3].kind === "const" && btn.members[3].value === "0", "equ member");
+    ok(sm.strucs[2].members[1].offset === 48, "padding advances offset (XConfigureEvent.x @ 48)");
+    ok(sm.symbols.some((s) => s.name === "Button_size" && /16 bytes/.test(s.doc.brief[0])), "Name_size synthesized");
+    ok(
+        P.parseDocument("struc A\n .a resd 1\nstruc B\n .b resd 1\nendstruc\n").strucs.map((s) => s.name).join() === "A,B",
+        "nested struc closes outer"
+    );
+    ok(P.parseDocument("struc C\n .c resd 1\n").strucs.length === 1, "unclosed struc tolerated");
+
     const L = require(path.join(SERVER_OUT, "libscan.js"));
     const cache = L.ldconfigMap();
     ok(cache.size > 100, `ldconfig entries (${cache.size})`);
@@ -341,6 +378,34 @@ async function integration() {
         poll();
     });
     ok(auto.length > 0, "as-you-type diagnostics without save");
+
+    // strucs: cross-file member completion, hover with offsets, goto-def
+    fs.writeFileSync(
+        `${WS}/s.asm`,
+        ["struc Button", "    .x resd 1", "    .w resd 1", "    .width resd 1", "    .kind equ 0", "endstruc", "global useit", "useit:", "    ret", ""].join("\n")
+    );
+    const uText = ["extern useit", "_start:", "    mov eax, [rcx + Button.]", "    mov eax, [rcx + Button.w]", "    mov eax, Button_size", ""].join("\n");
+    fs.writeFileSync(`${WS}/u.asm`, uText);
+    const sUri = `file://${WS}/s.asm`;
+    c.notify("textDocument/didOpen", { textDocument: { uri: sUri, languageId: "nasm", version: 1, text: fs.readFileSync(`${WS}/s.asm`, "utf8") } });
+    await new Promise((r) => setTimeout(r, 200));
+    const uUri = `file://${WS}/u.asm`;
+    c.notify("textDocument/didOpen", { textDocument: { uri: uUri, languageId: "nasm", version: 1, text: uText } });
+    await new Promise((r) => setTimeout(r, 400));
+    const compDot = await c.req("textDocument/completion", { textDocument: { uri: uUri }, position: { line: 2, character: 27 } });
+    const dotLabels = (compDot.result || []).map((i) => i.label).sort();
+    ok(dotLabels.join() === "Button.kind,Button.w,Button.width,Button.x", "members complete after Button.: " + dotLabels.join());
+    const compW = await c.req("textDocument/completion", { textDocument: { uri: uUri }, position: { line: 3, character: 28 } });
+    const wLabels = (compW.result || []).map((i) => i.label).sort();
+    ok(wLabels.join() === "Button.w,Button.width", "members filtered by prefix: " + wLabels.join());
+    const compSize = await c.req("textDocument/completion", { textDocument: { uri: uUri }, position: { line: 4, character: 24 } });
+    ok((compSize.result || []).some((i) => i.label === "Button_size"), "synthesized Button_size completes");
+    const hovM = await c.req("textDocument/hover", { textDocument: { uri: uUri }, position: { line: 3, character: 26 } });
+    const hvM = (hovM.result && hovM.result.contents && hovM.result.contents.value) || "";
+    ok(hvM.includes("Button.w") && hvM.includes("offset 4") && hvM.includes("dword"), "member hover shows offset + size: " + hvM.split("\n").slice(0, 6).join(" | "));
+    ok(hvM.includes("s.asm"), "member hover shows origin file");
+    const defM = await c.req("textDocument/definition", { textDocument: { uri: uUri }, position: { line: 3, character: 26 } });
+    ok(defM.result && defM.result.uri === `file://${WS}/s.asm` && defM.result.range.start.line === 2, "goto-def jumps to member: " + JSON.stringify(defM.result));
 
     // stack pairing: unbalanced function errors without save (as-you-type)
     const stUri = `file://${WS}/st.asm`;

@@ -1,3 +1,7 @@
+# 0.2.1
+
+- struc support: member completion after `Name.`, hover with offsets/sizes, cross-file goto-def, auto `Name_size`.
+
 # 0.2.0
 
 - FILO pair coloring via semantic tokens: each push cycles 6 colors, each pop wears its matching push's color.
