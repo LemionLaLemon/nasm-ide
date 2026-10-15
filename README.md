@@ -30,6 +30,8 @@ substantially extended here. License: MIT, see `LICENSE.md`.
   from their headers, summaries from man pages (see below).
 - `struc` support: member completion after `Name.`, hover with computed
   offsets/sizes, cross-file goto-def, auto `Name_size` (see below).
+- `.bss`/`.data` symbols: `name resb N` / `name db ...` complete, hover
+  (with sizes), and jump to definition, same-file or via `global`+`extern`.
 - Doc comments above labels and `equ` constants (see below).
 - As-you-type (debounced) or on-save diagnostics.
 - `NASM IDE: Pick Link Libraries` - fuzzy-search every linkable `-l` flag

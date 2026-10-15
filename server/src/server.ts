@@ -30,7 +30,7 @@ import {
     getRegister,
     getRegisterCompletions,
 } from "./nasmData";
-import { DocumentModel, StrucDef, StrucMember, parseDocument, renderSymbolDoc, strucSizeBrief } from "./parser";
+import { DocumentModel, StrucDef, StrucMember, SymbolKind, parseDocument, renderSymbolDoc, strucSizeBrief } from "./parser";
 import { getLibcCompletions, getLibcFunction, renderLibcFunction } from "./libcData";
 import { LibraryIndex } from "./libraries";
 import { listLibraryCandidates } from "./libscan";
@@ -64,8 +64,9 @@ interface IndexEntry {
     uri: string;
     line: number;
     character: number;
-    kind: "label" | "const";
+    kind: SymbolKind;
     doc: DocumentModel["symbols"][number]["doc"];
+    detail?: string;
 }
 
 const connection = createConnection(ProposedFeatures.all);
@@ -377,8 +378,14 @@ connection.onCompletion((params): CompletionItem[] => {
             if (!lowerPrefix || sym.name.toLowerCase().startsWith(lowerPrefix)) {
                 items.push({
                     label: sym.name,
-                    kind: sym.kind === "label" ? CompletionItemKind.Function : CompletionItemKind.Constant,
-                    detail: sym.kind === "label" ? "label" : "equ constant",
+                    kind:
+                        sym.kind === "label"
+                            ? CompletionItemKind.Function
+                            : sym.kind === "data"
+                              ? CompletionItemKind.Variable
+                              : CompletionItemKind.Constant,
+                    detail:
+                        sym.kind === "label" ? "label" : sym.kind === "data" ? (sym.detail ?? "data") : "equ constant",
                     documentation: { kind: MarkupKind.Markdown, value: renderSymbolDoc(sym) },
                     ...(wordEditRange
                         ? { textEdit: { range: wordEditRange, newText: sym.name } }
@@ -396,7 +403,12 @@ connection.onCompletion((params): CompletionItem[] => {
         const origin = path.basename(fileUriToPath(first.uri));
         items.push({
             label: first.name,
-            kind: first.kind === "label" ? CompletionItemKind.Function : CompletionItemKind.Constant,
+            kind:
+                first.kind === "label"
+                    ? CompletionItemKind.Function
+                    : first.kind === "data"
+                      ? CompletionItemKind.Variable
+                      : CompletionItemKind.Constant,
             detail: `global \u2014 ${origin}`,
             documentation: {
                 kind: MarkupKind.Markdown,
@@ -885,6 +897,7 @@ function indexModel(uri: string, model: DocumentModel): void {
             character: sym.character,
             kind: sym.kind,
             doc: sym.doc,
+            detail: sym.detail,
         };
         const arr = workspaceIndex.get(key);
         if (arr) {

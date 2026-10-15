@@ -87,6 +87,28 @@ function unit() {
     );
     ok(P.parseDocument("struc C\n .c resd 1\n").strucs.length === 1, "unclosed struc tolerated");
 
+    const DSRC = [
+        "section .bss",
+        "    screen_num resb 4",
+        "    ev resb 192",
+        "section .data",
+        '    windowtitle db "Paint",0',
+        "    count: resd 1",
+        "    mask equ 1",
+        "mainloop:",
+        "    mov eax, 1",
+        "    global foo",
+    ].join("\n");
+    const dm = P.parseDocument(DSRC);
+    const byName = (n) => dm.symbols.find((s) => s.name === n);
+    ok(byName("screen_num").kind === "data" && byName("screen_num").detail === "4 bytes", "resb with size");
+    ok(byName("ev").detail === "192 bytes", "large reserve");
+    ok(byName("windowtitle").kind === "data" && /db/.test(byName("windowtitle").detail), "db initialized");
+    ok(byName("count").kind === "data", "colon form is data, not label");
+    ok(byName("mask").kind === "const" && byName("mainloop").kind === "label", "equ/labels unchanged");
+    ok(!byName("mov") && !byName("global") && !byName("section"), "instructions/directives not symbols");
+    ok(P.renderSymbolDoc(byName("screen_num")).includes("4 bytes"), "data hover renders size");
+
     const L = require(path.join(SERVER_OUT, "libscan.js"));
     const cache = L.ldconfigMap();
     ok(cache.size > 100, `ldconfig entries (${cache.size})`);
@@ -425,6 +447,33 @@ async function integration() {
     ok(hvM.includes("s.asm"), "member hover shows origin file");
     const defM = await c.req("textDocument/definition", { textDocument: { uri: uUri }, position: { line: 3, character: 26 } });
     ok(defM.result && defM.result.uri === `file://${WS}/s.asm` && defM.result.range.start.line === 2, "goto-def jumps to member: " + JSON.stringify(defM.result));
+
+    // data symbols: bss/data reserves complete, hover, and jump
+    fs.writeFileSync(
+        `${WS}/d.asm`,
+        ["section .bss", "    screen_num resb 4", "section .data", '    windowtitle db "Paint",0', "global shareme", "global screen_num", "global windowtitle", "shareme:", "    mov eax, [screen_num]", "    ret", ""].join("\n")
+    );
+    const eText = ["extern shareme", "extern screen_num", "extern windowtitle", "    mov eax, [screen_num]", "    lea rdi, [windowtitle]", ""].join("\n");
+    fs.writeFileSync(`${WS}/e.asm`, eText);
+    const ddUri = `file://${WS}/d.asm`;
+    const eeUri = `file://${WS}/e.asm`;
+    c.notify("textDocument/didOpen", { textDocument: { uri: ddUri, languageId: "nasm", version: 1, text: fs.readFileSync(`${WS}/d.asm`, "utf8") } });
+    c.notify("textDocument/didOpen", { textDocument: { uri: eeUri, languageId: "nasm", version: 1, text: eText } });
+    await new Promise((r) => setTimeout(r, 400));
+    const compS = await c.req("textDocument/completion", { textDocument: { uri: eeUri }, position: { line: 3, character: 20 } });
+    const sItem = (compS.result || []).find((i) => i.label === "screen_num");
+    ok(!!sItem && sItem.detail === "global — d.asm", "workspace data reserve completes");
+    const hovS = await c.req("textDocument/hover", { textDocument: { uri: eeUri }, position: { line: 3, character: 16 } });
+    const hvS = (hovS.result && hovS.result.contents && hovS.result.contents.value) || "";
+    ok(hvS.includes("screen_num") && hvS.includes("4 bytes"), "data hover shows size");
+    const defS = await c.req("textDocument/definition", { textDocument: { uri: eeUri }, position: { line: 3, character: 16 } });
+    ok(defS.result && defS.result.uri === ddUri && defS.result.range.start.line === 1, "goto-def jumps to resb: " + JSON.stringify(defS.result));
+    const hovW = await c.req("textDocument/hover", { textDocument: { uri: eeUri }, position: { line: 4, character: 16 } });
+    const hvW = (hovW.result && hovW.result.contents && hovW.result.contents.value) || "";
+    ok(hvW.includes("windowtitle"), "db hover resolves cross-file");
+    const hovLocal = await c.req("textDocument/hover", { textDocument: { uri: ddUri }, position: { line: 8, character: 16 } });
+    const hvLocal = (hovLocal.result && hovLocal.result.contents && hovLocal.result.contents.value) || "";
+    ok(hvLocal.includes("screen_num") && hvLocal.includes("4 bytes"), "same-file data hover");
 
     // stack pairing: unbalanced function errors without save (as-you-type)
     const stUri = `file://${WS}/st.asm`;

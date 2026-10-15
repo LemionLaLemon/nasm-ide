@@ -1,6 +1,6 @@
 // Document model for NASM source files: labels/constants, doc comments,
 // and global/extern declarations.
-export type SymbolKind = "label" | "const";
+export type SymbolKind = "label" | "const" | "data";
 
 export interface DocParam {
     name: string;
@@ -20,6 +20,8 @@ export interface AsmSymbol {
     line: number;
     character: number;
     doc: SymbolDoc;
+    /** Extra one-liner (data reserves: "4 bytes", "db data", ...). */
+    detail?: string;
 }
 
 export interface ExternDecl {
@@ -76,6 +78,23 @@ const MEMBER_RES_REGEX = /^\s*([A-Za-z_.$][\w.$]*)\s*:?\s*(res[bwdqotyxz]|d[bwdq
 const MEMBER_EQU_REGEX = /^\s*([A-Za-z_.$][\w.$]*)\s*:?\s*\bequ\b\s*(.*)$/i;
 const STRUC_ALIGN_REGEX = /^\s*alignb?\s+(\d+)/i;
 const STRUC_PAD_REGEX = /^\s*(res[bwdqotyxz]|d[bwdqtyz])\b\s*(.*)$/i;
+const DATA_DEF_REGEX = /^\s*([A-Za-z_.$][\w.$]*)\s+(res[bwdqotyxz]|d[bwdqtyz])\b\s*(.*)$/i;
+const DATA_AFTER_COLON_REGEX = /:\s*(res[bwdqotyxz]|d[bwdqtyz])\b\s*(.*)$/i;
+
+/** One-liner for a data definition: exact bytes when countable. */
+function dataDetail(op: string, rest: string): string {
+    const lower = op.toLowerCase();
+    const size = lower.startsWith("res") ? RES_SIZES[lower] : DB_SIZES[lower];
+    const t = rest.trim();
+    if (size !== undefined && lower.startsWith("res") && /^\d+$/.test(t)) {
+        const n = parseInt(t, 10) * size;
+        return `${n} byte${n === 1 ? "" : "s"}`;
+    }
+    if (size !== undefined && lower.startsWith("res")) {
+        return `${lower} reserve`;
+    }
+    return `${lower} initialized data`;
+}
 
 /** Element count for a reservation: plain integer for resX, comma-separated
  * items for db-style initializers. */
@@ -259,7 +278,7 @@ export function extractDocComment(lines: string[], symbolLine: number, trailing:
     return doc;
 }
 
-export function renderSymbolDoc(sym: Pick<AsmSymbol, "name" | "kind" | "doc">): string {
+export function renderSymbolDoc(sym: Pick<AsmSymbol, "name" | "kind" | "doc"> & { detail?: string }): string {
     const lines: string[] = [];
     lines.push("```nasm");
     lines.push(sym.kind === "label" ? `${sym.name}:` : sym.name);
@@ -268,9 +287,13 @@ export function renderSymbolDoc(sym: Pick<AsmSymbol, "name" | "kind" | "doc">): 
     const doc = sym.doc;
     const hasDoc =
         doc && (doc.brief.some((l) => l.trim()) || doc.params.length > 0 || doc.returns.length > 0);
-    if (!hasDoc) {
+    if (!hasDoc && sym.kind !== "data") {
         lines.push(sym.kind === "label" ? "Code label." : "Constant defined with `equ`.");
         return lines.join("\n");
+    }
+    if (sym.kind === "data") {
+        lines.push(sym.detail ? `Data reserve \u2014 ${sym.detail}.` : "Data reserve.");
+        lines.push("");
     }
     const brief = doc.brief.join("\n").trim();
     if (brief) {
@@ -391,13 +414,25 @@ export function parseDocument(text: string): DocumentModel {
         if (labelMatch) {
             const name = labelMatch[1];
             const character = raw.indexOf(name);
-            symbols.push({
-                name,
-                kind: "label",
-                line: lineIndex,
-                character: character >= 0 ? character : 0,
-                doc: extractDocComment(lines, lineIndex, trailing),
-            });
+            const afterColon = DATA_AFTER_COLON_REGEX.exec(code);
+            if (afterColon) {
+                symbols.push({
+                    name,
+                    kind: "data",
+                    line: lineIndex,
+                    character: character >= 0 ? character : 0,
+                    doc: extractDocComment(lines, lineIndex, trailing),
+                    detail: dataDetail(afterColon[1], afterColon[2] || ""),
+                });
+            } else {
+                symbols.push({
+                    name,
+                    kind: "label",
+                    line: lineIndex,
+                    character: character >= 0 ? character : 0,
+                    doc: extractDocComment(lines, lineIndex, trailing),
+                });
+            }
             continue;
         }
         const constMatch = CONST_REGEX.exec(code);
@@ -410,6 +445,20 @@ export function parseDocument(text: string): DocumentModel {
                 line: lineIndex,
                 character: character >= 0 ? character : 0,
                 doc: extractDocComment(lines, lineIndex, trailing),
+            });
+            continue;
+        }
+        const dataMatch = DATA_DEF_REGEX.exec(code);
+        if (dataMatch) {
+            const name = dataMatch[1];
+            const character = raw.indexOf(name);
+            symbols.push({
+                name,
+                kind: "data",
+                line: lineIndex,
+                character: character >= 0 ? character : 0,
+                doc: extractDocComment(lines, lineIndex, trailing),
+                detail: dataDetail(dataMatch[2], dataMatch[3] || ""),
             });
         }
     }

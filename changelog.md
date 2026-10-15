@@ -1,5 +1,9 @@
 # 0.2.2
 
+- .bss/.data definitions (`name resb N`, `name db ...`) are first-class symbols: completion, hover with sizes, goto-def.
+
+# 0.2.2
+
 - `.` triggers completion (member lists on `Name.`).
 - Explicit textEdit ranges: accepting `Tool.pencil`/`.loop` no longer duplicates the qualifier.
 
