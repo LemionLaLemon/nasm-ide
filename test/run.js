@@ -398,6 +398,25 @@ async function integration() {
     const compW = await c.req("textDocument/completion", { textDocument: { uri: uUri }, position: { line: 3, character: 28 } });
     const wLabels = (compW.result || []).map((i) => i.label).sort();
     ok(wLabels.join() === "Button.w,Button.width", "members filtered by prefix: " + wLabels.join());
+    const wItem = (compW.result || []).find((i) => i.label === "Button.width");
+    const wEdit = wItem && wItem.textEdit;
+    ok(
+        !!wEdit && wEdit.newText === "Button.width" && wEdit.range.start.character === 20 && wEdit.range.end.character === 28,
+        "member textEdit replaces the whole qualified word (no Tool.Tool duplication)"
+    );
+    // local dot-labels get the same treatment: `.lo` must become `.loop`, not `..loop`
+    const dUri = `file://${WS}/dot.asm`;
+    c.notify("textDocument/didOpen", {
+        textDocument: { uri: dUri, languageId: "nasm", version: 1, text: ".loop:\n    jmp .lo" },
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    const compD = await c.req("textDocument/completion", { textDocument: { uri: dUri }, position: { line: 1, character: 11 } });
+    const dItem = (compD.result || []).find((i) => i.label === ".loop");
+    const dEdit = dItem && dItem.textEdit;
+    ok(
+        !!dEdit && dEdit.newText === ".loop" && dEdit.range.start.character === 8 && dEdit.range.end.character === 11,
+        "dot-label textEdit covers the dot"
+    );
     const compSize = await c.req("textDocument/completion", { textDocument: { uri: uUri }, position: { line: 4, character: 24 } });
     ok((compSize.result || []).some((i) => i.label === "Button_size"), "synthesized Button_size completes");
     const hovM = await c.req("textDocument/hover", { textDocument: { uri: uUri }, position: { line: 3, character: 26 } });

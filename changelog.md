@@ -1,3 +1,8 @@
+# 0.2.2
+
+- `.` triggers completion (member lists on `Name.`).
+- Explicit textEdit ranges: accepting `Tool.pencil`/`.loop` no longer duplicates the qualifier.
+
 # 0.2.1
 
 - struc support: member completion after `Name.`, hover with offsets/sizes, cross-file goto-def, auto `Name_size`.

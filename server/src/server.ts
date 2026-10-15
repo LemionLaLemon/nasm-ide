@@ -127,7 +127,7 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
             textDocumentSync: TextDocumentSyncKind.Incremental,
             completionProvider: {
                 resolveProvider: false,
-                triggerCharacters: [" ", "\t", "%", "["],
+                triggerCharacters: [" ", "\t", "%", "[", "."],
             },
             hoverProvider: true,
             definitionProvider: true,
@@ -335,6 +335,10 @@ connection.onCompletion((params): CompletionItem[] => {
     const prefix = wordRange ? text.slice(wordRange.start, wordRange.end) : "";
     const lowerPrefix = prefix.toLowerCase();
     const items: CompletionItem[] = [];
+    // Explicit replacement range: the client's word pattern stops at `.`
+    // but our labels can carry qualifiers (`Tool.pencil`, `.loop`), so
+    // without this the label gets inserted next to the typed tail.
+    const wordEditRange = wordRange ? toRange(document, wordRange.start, wordRange.end) : undefined;
     for (const inst of getInstructionCompletions(lowerPrefix)) {
         const usage = `${inst.mnemonic}${inst.operands ? ` ${inst.operands}` : ""}`;
         const docParts = ["```nasm", usage, "```", ""];
@@ -376,6 +380,9 @@ connection.onCompletion((params): CompletionItem[] => {
                     kind: sym.kind === "label" ? CompletionItemKind.Function : CompletionItemKind.Constant,
                     detail: sym.kind === "label" ? "label" : "equ constant",
                     documentation: { kind: MarkupKind.Markdown, value: renderSymbolDoc(sym) },
+                    ...(wordEditRange
+                        ? { textEdit: { range: wordEditRange, newText: sym.name } }
+                        : {}),
                 });
             }
         }
@@ -395,6 +402,7 @@ connection.onCompletion((params): CompletionItem[] => {
                 kind: MarkupKind.Markdown,
                 value: `${renderSymbolDoc(first)}\n\nDefined in \`${origin}\``,
             },
+            ...(wordEditRange ? { textEdit: { range: wordEditRange, newText: first.name } } : {}),
         });
     }
     for (const fn of getLibcCompletions(lowerPrefix)) {
@@ -446,9 +454,11 @@ connection.onCompletion((params): CompletionItem[] => {
                         continue;
                     }
                     seenM.add(dedupe);
+                    const qualified = `${def.name}${m.name.startsWith(".") ? m.name : "." + m.name}`;
                     items.push({
-                        label: `${def.name}${m.name.startsWith(".") ? m.name : "." + m.name}`,
+                        label: qualified,
                         filterText: `${typedStruc}.${m.bare}`,
+                        textEdit: wordEditRange ? { range: wordEditRange, newText: qualified } : undefined,
                         kind:
                             m.kind === "field"
                                 ? CompletionItemKind.Field
