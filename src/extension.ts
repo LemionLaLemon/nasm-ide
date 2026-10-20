@@ -19,15 +19,19 @@ interface NasmIdeTaskDefinition extends vscode.TaskDefinition {
 }
 
 let client: LanguageClient | undefined;
+let extensionContext: vscode.ExtensionContext | undefined;
+let asmWatcher: vscode.FileSystemWatcher | undefined;
 
-export function activate(context: vscode.ExtensionContext): void {
+function createClient(
+    context: vscode.ExtensionContext,
+    watcher: vscode.FileSystemWatcher
+): LanguageClient {
     const serverModule = context.asAbsolutePath(path.join("server", "out", "server.js"));
     const debugOptions = { execArgv: ["--nolazy", "--inspect=6009"] };
     const serverOptions: ServerOptions = {
         run: { module: serverModule, transport: TransportKind.ipc },
         debug: { module: serverModule, transport: TransportKind.ipc, options: debugOptions },
     };
-    const asmWatcher = vscode.workspace.createFileSystemWatcher("**/*.{asm,nasm,inc}");
     const clientOptions: LanguageClientOptions = {
         documentSelector: [
             { scheme: "file", language: "nasm" },
@@ -35,18 +39,68 @@ export function activate(context: vscode.ExtensionContext): void {
         ],
         synchronize: {
             configurationSection: "nasmIde",
-            fileEvents: asmWatcher,
+            fileEvents: watcher,
         },
     };
-    client = new LanguageClient("nasmIde", "NASM IDE Language Server", serverOptions, clientOptions);
+    return new LanguageClient("nasmIde", "NASM IDE Language Server", serverOptions, clientOptions);
+}
+
+function reportStartFailure(error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    void vscode.window.showErrorMessage(
+        `NASM IDE: language server failed to start (${message}). ` +
+            "If VS Code was updated or its Electron binary replaced while running, fully quit and relaunch VS Code."
+    );
+}
+
+function startClient(): Promise<boolean> {
+    if (!client) {
+        return Promise.resolve(false);
+    }
+    return Promise.resolve<unknown>(client.start()).then(
+        () => true,
+        (error) => {
+            reportStartFailure(error);
+            return false;
+        }
+    );
+}
+
+/** Recreate the client: after a failed start the old one refuses to restart. */
+async function restartClient(): Promise<boolean> {
+    if (!extensionContext || !asmWatcher) {
+        return false;
+    }
+    if (client) {
+        try {
+            await client.stop();
+        } catch {
+            // startFailed/stopped clients throw here; a fresh client is the fix.
+        }
+        try {
+            await client.dispose();
+        } catch {
+            // ignore: disposing a failed client can also throw
+        }
+    }
+    client = createClient(extensionContext, asmWatcher);
+    return startClient();
+}
+
+export function activate(context: vscode.ExtensionContext): void {
+    extensionContext = context;
+    asmWatcher = vscode.workspace.createFileSystemWatcher("**/*.{asm,nasm,inc}");
+    const watcher = asmWatcher;
+    client = createClient(context, watcher);
 
     context.subscriptions.push(
         vscode.commands.registerCommand("nasmIde.restartServer", async () => {
-            if (client) {
-                await client.stop();
-            }
-            await client?.start();
-            void vscode.window.showInformationMessage("NASM IDE language server restarted.");
+            const ok = await restartClient();
+            void vscode.window.showInformationMessage(
+                ok
+                    ? "NASM IDE language server restarted."
+                    : "NASM IDE language server could not be restarted. See the error notification."
+            );
         }),
         vscode.commands.registerCommand("nasmIde.showServerStatus", () => {
             const running = client && client.isRunning();
@@ -68,10 +122,10 @@ export function activate(context: vscode.ExtensionContext): void {
             await pickLibraries();
         }),
         vscode.tasks.registerTaskProvider("nasm-ide", new NasmIdeTaskProvider()),
-        asmWatcher,
+        watcher,
         { dispose: () => client?.stop() }
     );
-    client.start();
+    startClient();
 }
 
 async function pickLibraries(): Promise<void> {

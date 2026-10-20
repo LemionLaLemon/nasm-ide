@@ -1,3 +1,8 @@
+# 0.2.4
+
+- Language server start failures now show an actionable error instead of a silent `startFailed` state (e.g. VS Code's Electron binary replaced while it was running: fully quit and relaunch).
+- "Restart language server" recreates the client after a failed start instead of failing with "Client is not running and can't be stopped".
+
 # 0.2.3
 
 - Stack checking follows control flow: `jmp`/conditional jumps to local labels are tracked, so a branch that skips the normal epilogue can pop on its own path without a false "pop without a matching push" error. Pair colors follow the same paths.
