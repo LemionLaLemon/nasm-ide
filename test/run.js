@@ -114,9 +114,23 @@ function unit() {
     ok(cache.size > 100, `ldconfig entries (${cache.size})`);
     const libc = L.resolveLibrary("c");
     ok(!!libc && fs.existsSync(libc), "resolve -lc: " + libc);
+    if (process.arch === "x64") {
+        ok(!/\/lib32\//.test(libc), "native 64-bit libc preferred over multilib: " + libc);
+        ok(!/\/lib32\//.test(cache.get("libc.so.6") || ""), "ldconfig keeps native duplicate: " + cache.get("libc.so.6"));
+    }
     ok(L.resolveLibrary("definitely_not_a_lib_xyz") === null, "unknown lib -> null");
     const syms = L.nmDefinedSymbols(libc);
     ok(syms.has("printf") && syms.has("malloc") && syms.has("strtod"), "libc exports parsed");
+    // Debian/Arch ncurses dev files are GNU ld scripts (INPUT(-lncursesw));
+    // nm can't read those directly, so follow the script.
+    const ncurses = L.resolveLibrary("ncurses");
+    if (ncurses) {
+        const ns = L.nmDefinedSymbols(ncurses);
+        ok(
+            ns.has("initscr") && ns.has("stdscr") && ns.has("endwin") && ns.has("curs_set"),
+            "ncurses exports resolved through ld script: " + ncurses
+        );
+    }
     const cands = L.listLibraryCandidates();
     ok(cands.length > 50 && cands.some((c) => c.flag === "c"), `candidates (${cands.length})`);
 
@@ -137,6 +151,14 @@ function unit() {
     ok(idx.ensure(["c"]) === false, "index cached");
     ok(idx.provides("printf") && !idx.provides("totally_made_up_xyz"), "provides()");
     ok(idx.providesIn("c", "printf") && !idx.providesIn("c", "nope"), "per-lib providesIn");
+    if (L.resolveLibrary("ncurses")) {
+        const ncIdx = new LibraryIndex();
+        ncIdx.ensure(["c", "ncurses"]);
+        ok(
+            ncIdx.provides("initscr") && ncIdx.provides("stdscr") && ncIdx.provides("printf"),
+            "c + ncurses index covers both libraries"
+        );
+    }
 
     const S = require(path.join(SERVER_OUT, "stackcheck.js"));
     const P2 = require(path.join(SERVER_OUT, "parser.js"));

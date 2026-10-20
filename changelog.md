@@ -1,3 +1,9 @@
+# 0.2.5
+
+- Library scanning now resolves GNU ld scripts (`INPUT(-lncursesw)` in `/usr/lib/libncurses.so`), so ncurses externs like `initscr`, `curs_set`, and `stdscr` no longer report as unresolved.
+- Multilib systems: native architecture libraries are preferred over 32-bit `/usr/lib32` duplicates.
+- Linker scripts are followed recursively, including static archives referenced from `GROUP(...)`.
+
 # 0.2.4
 
 - Language server start failures now show an actionable error instead of a silent `startFailed` state (e.g. VS Code's Electron binary replaced while it was running: fully quit and relaunch).

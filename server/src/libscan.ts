@@ -36,20 +36,59 @@ function flagFromLibName(lib: string): string | null {
     return base.length > 0 ? base : null;
 }
 
-/** Parse `ldconfig -p` into soname -> path. */
+/** Parse `ldconfig -p` into soname -> path, preferring the host architecture.
+ *  Multilib systems list 32-bit entries after the native ones, so a plain
+ *  Map.set would let /usr/lib32 overwrite /usr/lib. */
 export function ldconfigMap(): Map<string, string> {
     const out = new Map<string, string>();
+    const scores = new Map<string, number>();
     const text = execQuiet("ldconfig", ["-p"]);
     if (!text) {
         return out;
     }
     for (const line of text.split("\n")) {
-        const m = /^\s*(\S+)\s+\([^)]*\)\s+=>\s+(\S+)\s*$/.exec(line);
-        if (m) {
-            out.set(m[1], m[2]);
+        const m = /^\s*(\S+)\s+\(([^)]*)\)\s+=>\s+(\S+)\s*$/.exec(line);
+        if (!m) {
+            continue;
+        }
+        const [, name, tag, p] = m;
+        const score = ldconfigScore(tag, p);
+        const prev = scores.get(name);
+        if (prev === undefined || score > prev) {
+            out.set(name, p);
+            scores.set(name, score);
         }
     }
     return out;
+}
+
+const NATIVE_TAGS: Record<string, RegExp> = {
+    x64: /x86-64|x86_64/,
+    arm64: /aarch64|arm64/,
+    ia32: /i[3-6]86/,
+    arm: /arm/,
+    ppc64: /ppc64/,
+    s390x: /s390x/,
+    riscv64: /riscv64/,
+    loong64: /loong/,
+};
+
+function ldconfigScore(tag: string, p: string): number {
+    const native = NATIVE_TAGS[process.arch];
+    const host64 = process.arch === "x64" || process.arch.endsWith("64");
+    let score = 0;
+    const is32Path = /(^|\/)(lib32|libx32|i[3-6]86-linux-gnu)\//.test(p);
+    const is32Tag = /\bi[3-6]86\b/.test(tag);
+    if ((is32Path || is32Tag) && host64) {
+        score -= 100;
+    }
+    if (native && native.test(tag)) {
+        score += 10;
+    }
+    if (p.startsWith("/usr/lib/") || p.startsWith("/lib/")) {
+        score += 1;
+    }
+    return score;
 }
 
 /** Directories the system linker searches, from gcc plus common defaults. */
@@ -90,6 +129,17 @@ export function linkerSearchDirs(): string[] {
     return dirs;
 }
 
+function pathArchScore(p: string): number {
+    let score = 0;
+    if (/(^|\/)(lib32|libx32|i[3-6]86-linux-gnu)\//.test(p)) {
+        score -= 100;
+    }
+    if (p.startsWith("/usr/lib/") || p.startsWith("/lib/")) {
+        score += 1;
+    }
+    return score;
+}
+
 /**
  * Resolve a `-l` flag (without prefix) to a linkable file.
  * Prefers the ldconfig dev symlink (libfoo.so), then search directories.
@@ -97,14 +147,27 @@ export function linkerSearchDirs(): string[] {
 export function resolveLibrary(flag: string): string | null {
     const dev = `lib${flag}.so`;
     const cache = ldconfigMap();
-    if (cache.has(dev)) {
-        return cache.get(dev) as string;
+    let best: string | null = null;
+    let bestScore = -Infinity;
+    const consider = (p: string): void => {
+        const score = pathArchScore(p);
+        if (score > bestScore) {
+            best = p;
+            bestScore = score;
+        }
+    };
+    const exact = cache.get(dev);
+    if (exact) {
+        consider(exact);
     }
-    // Any versioned entry proves the flag exists; still prefer a real .so.
+    // Any versioned entry proves the flag exists; prefer native over multilib.
     for (const [name, p] of cache) {
         if (name === dev || name.startsWith(`${dev}.`)) {
-            return p;
+            consider(p);
         }
+    }
+    if (best) {
+        return best;
     }
     for (const dir of linkerSearchDirs()) {
         for (const cand of [`lib${flag}.so`, `lib${flag}.a`]) {
@@ -121,10 +184,80 @@ export function resolveLibrary(flag: string): string | null {
     return null;
 }
 
-/** Defined dynamic symbols of a shared object (version suffixes stripped). */
-export function nmDefinedSymbols(soPath: string): Set<string> {
+/** Follow a GNU ld script (e.g. libncurses.so -> INPUT(-lncursesw)) and
+ *  return the referenced files. Returns null when the file is not a script. */
+function ldScriptRefs(file: string): string[] | null {
+    let text: string;
+    try {
+        if (fs.statSync(file).size > 512 * 1024) {
+            return null;
+        }
+        text = fs.readFileSync(file, "utf8");
+    } catch {
+        return null;
+    }
+    // ELF binaries contain NUL bytes; scripts are plain text.
+    if (text.includes("\u0000") || !/GNU ld script|^\s*(?:INPUT|GROUP)\s*\(/m.test(text)) {
+        return null;
+    }
+    text = text.replace(/\/\*[\s\S]*?\*\//g, " ");
+    const refs: string[] = [];
+    for (const m of text.matchAll(/-l\s*([\w.+-]+)/g)) {
+        const resolved = resolveLibrary(m[1]);
+        if (resolved) {
+            refs.push(resolved);
+        }
+    }
+    for (const m of text.matchAll(/(?:^|[\s(])((?:\/|lib)[^\s()]+\.(?:so(?:\.\d+)*|a))(?=[\s)]|$)/g)) {
+        const raw = m[1];
+        if (raw.startsWith("/")) {
+            try {
+                if (fs.statSync(raw).isFile()) {
+                    refs.push(raw);
+                }
+            } catch {
+                // referenced path missing
+            }
+            continue;
+        }
+        for (const dir of linkerSearchDirs()) {
+            const full = path.join(dir, raw);
+            try {
+                if (fs.statSync(full).isFile()) {
+                    refs.push(full);
+                    break;
+                }
+            } catch {
+                // try next dir
+            }
+        }
+    }
+    return refs;
+}
+
+function nmFile(file: string, visited: Set<string>, depth: number): Set<string> {
     const out = new Set<string>();
-    const text = execQuiet("nm", ["-D", "--defined-only", soPath]);
+    let real = file;
+    try {
+        real = fs.realpathSync(file);
+    } catch {
+        // keep the given path
+    }
+    if (depth > 4 || visited.has(real)) {
+        return out;
+    }
+    visited.add(real);
+    const refs = ldScriptRefs(real);
+    if (refs) {
+        for (const ref of refs) {
+            for (const sym of nmFile(ref, visited, depth + 1)) {
+                out.add(sym);
+            }
+        }
+        return out;
+    }
+    const isArchive = /\.a$/.test(real.toLowerCase());
+    const text = execQuiet("nm", isArchive ? ["--defined-only", real] : ["-D", "--defined-only", real]);
     if (!text) {
         return out;
     }
@@ -135,6 +268,11 @@ export function nmDefinedSymbols(soPath: string): Set<string> {
         }
     }
     return out;
+}
+
+/** Defined symbols of a linkable file, following GNU ld scripts. */
+export function nmDefinedSymbols(soPath: string): Set<string> {
+    return nmFile(soPath, new Set(), 0);
 }
 
 /**

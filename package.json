@@ -2,7 +2,7 @@
     "name": "nasm-ide",
     "displayName": "NASM IDE",
     "description": "Language Server Protocol-based IntelliSense, hover docs, cross-file extern support, library-aware diagnostics, and build tasks for NASM-style x86/x86_64 assembly.",
-    "version": "0.2.4",
+    "version": "0.2.5",
     "publisher": "lemion",
     "author": {
         "name": "lemion"
