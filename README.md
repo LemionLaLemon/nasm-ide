@@ -90,19 +90,24 @@ Force symbol yellow in any theme (`settings.json`):
 
 ## Stack checking
 
-`push`/`pop` families are highlighted distinctly, and the server pairs them:
+`push`/`pop` families are highlighted distinctly, and the server pairs them
+along the function's control flow (local labels, `jmp`, and conditional jumps
+are followed):
 
-- `pop` with a provably empty stack, or `ret` with pushes never popped on
-  the function-entry path: **error**.
-- Any push/pop left unmatched by whole-function linear pairing: **error**
-  on that line (the "can't find its pair" dark red).
+- `pop` with a provably empty stack on every path reaching it, or `ret` with
+  pushes never popped: **error**.
+- Pushes left over at a return/tail jump: **error** on that line (the "can't
+  find its pair" dark red).
+- A branch that skips the normal epilogue and pops on its own path is fine:
+  `.failed: pop rbx / pop rbp / ret` reached via `jc .failed` is valid even
+  though an earlier `pop` exists in the fall-through path.
 
 ### Pair colors (FILO)
 
 Every push gets the next color in a 6-color cycle; each pop wears its
 matching push's color (nesting-adjacent depths are maximally separated).
-Unmatched lines keep their push/pop color plus the red squiggle. Colors are
-user-configurable (`settings.json`):
+Unmatched pops and pushes keep their normal instruction color plus the red
+squiggle. Colors are user-configurable (`settings.json`):
 
 ```json
 "editor.semanticTokenColorCustomizations": {
@@ -117,9 +122,9 @@ user-configurable (`settings.json`):
 }
 ```
 
-This is a pairing heuristic, not dataflow analysis: branchy functions
-where a push on one path pairs with a pop on another can flag correct code.
-Disable per-workspace with `nasmIde.diagnostics.stackCheck: false`.
+This is a pairing heuristic, not a verifier: joins take the shallowest path,
+so genuinely conflicting paths are reported conservatively. Disable
+per-workspace with `nasmIde.diagnostics.stackCheck: false`.
 
 - Tags: `@param [size] name desc`, `@return [size] [name] desc`.
 - Sizes: `byte word dword qword tword oword yword zword`, `N bytes`

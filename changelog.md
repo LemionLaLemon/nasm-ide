@@ -1,3 +1,8 @@
+# 0.2.3
+
+- Stack checking follows control flow: `jmp`/conditional jumps to local labels are tracked, so a branch that skips the normal epilogue can pop on its own path without a false "pop without a matching push" error. Pair colors follow the same paths.
+- Fixed flaky integration tests (client/server JSON-RPC id collision).
+
 # 0.2.2
 
 - .bss/.data definitions (`name resb N`, `name db ...`) are first-class symbols: completion, hover with sizes, goto-def.

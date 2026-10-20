@@ -142,6 +142,31 @@ function unit() {
     const P2 = require(path.join(SERVER_OUT, "parser.js"));
     const stackOf = (src) => S.analyzeStack(src, P2.parseDocument(src));
     ok(stackOf("foo:\n    push rbx\n    pop rbx\n    ret\n").length === 0, "balanced function silent");
+    // branch that skips the normal epilogue pops: its own pops are valid
+    const branchSrc = [
+        "draw:",
+        "    push rbp",
+        "    push rbx",
+        "    test eax, eax",
+        "    jc .failed",
+        "    pop rbx",
+        "    pop rbp",
+        "    ret",
+        ".failed:",
+        "    pop rbx",
+        "    pop rbp",
+        "    ret",
+    ].join("\n");
+    ok(stackOf(branchSrc).length === 0, "pops on a branch path that skipped earlier pops are valid");
+    const branchPairs = new Map(S.pairPushPop(branchSrc, P2.parseDocument(branchSrc)).map((t) => [t.line, t.pair]));
+    ok(
+        branchPairs.get(5) === 1 && branchPairs.get(6) === 0 && branchPairs.get(9) === 1 && branchPairs.get(10) === 0,
+        "branch paths pair pops with the same pushes: " + JSON.stringify([...branchPairs])
+    );
+    ok(stackOf("f:\n    jc .b\n    jmp .b\n.b:\n    pop rax\n    ret\n").length > 0, "genuinely empty stack still flagged");
+    ok(stackOf("f:\n    push rbx\n.loop:\n    dec eax\n    jnz .loop\n    pop rbx\n    ret\n").length === 0, "loop body silent");
+    ok(stackOf("f:\n    push rbx\n    jmp .out\n.out:\n    pop rbx\n    ret\n").length === 0, "tail path keeps stack depth");
+    ok(stackOf("f:\n    jmp .done\n    push rbx\n.done:\n    ret\n").length === 0, "dead code after jmp not flagged");
     let iss = stackOf("foo:\n    push rbx\n    push r12\n    ret\n");
     ok(iss.length === 3 && iss.some((d) => /never popped/.test(d.message)), "forgotten pops flagged");
     iss = stackOf("foo:\n    pop rbx\n    ret\n");
@@ -191,7 +216,6 @@ function lspClient(serverJs, extraEnv) {
     proc.stderr.on("data", (d) => console.log("SERVER STDERR:", d.toString().slice(0, 500)));
     let buf = Buffer.alloc(0);
     const pending = new Map();
-    let id = 0;
     const notes = [];
     proc.stdout.on("data", (d) => {
         buf = Buffer.concat([buf, d]);
@@ -226,6 +250,9 @@ function lspClient(serverJs, extraEnv) {
         const s = JSON.stringify(m);
         proc.stdin.write(`Content-Length: ${Buffer.byteLength(s)}\r\n\r\n${s}`);
     };
+    // Client request ids start high so they can never collide with the ids the
+    // server uses for its own workspace/configuration requests.
+    let id = 1000;
     const api = {
         proc,
         notes,
