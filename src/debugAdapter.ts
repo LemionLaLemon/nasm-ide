@@ -1077,7 +1077,7 @@ class NasmDebugSession extends DebugSession {
     ): Promise<void> {
         this.terminating = true;
         try {
-            await this.gdb?.trySend("-exec-abort");
+            await this.stopInferior();
             this.gdb?.close();
         } finally {
             this.sendResponse(response);
@@ -1092,12 +1092,33 @@ class NasmDebugSession extends DebugSession {
         this.terminating = true;
         try {
             if (args.terminateDebuggee !== false) {
-                await this.gdb?.trySend("-exec-abort");
+                await this.stopInferior();
             }
             this.gdb?.close();
         } finally {
             this.sendResponse(response);
             this.sendEvent(new TerminatedEvent());
+        }
+    }
+
+    /**
+     * Stop a running target before closing gdb. Closing gdb while the target is
+     * still running (especially through gdbserver) can leave gdbserver and the
+     * inferior behind in the terminal, which then blocks the next launch.
+     */
+    private async stopInferior(): Promise<void> {
+        if (!this.gdb) {
+            return;
+        }
+        try {
+            await this.gdb.send("-exec-abort", 2000);
+        } catch {
+            // Already stopped, exited, or not interruptible.
+        }
+        try {
+            await this.gdb.send(`-interpreter-exec console ${miQuote("kill")}`, 2000);
+        } catch {
+            // The target may already be gone, or gdb is exiting.
         }
     }
 
@@ -1111,6 +1132,7 @@ class NasmDebugSession extends DebugSession {
         }
         try {
             if (this.gdb) {
+                await this.stopInferior();
                 this.gdb.removeAllListeners();
                 this.gdb.close();
             }

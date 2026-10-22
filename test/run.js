@@ -965,6 +965,84 @@ async function debuggerTests() {
     } finally {
         terminalClient.cleanup();
     }
+
+    // Stop while the inferior is running: the terminal's gdbserver must exit
+    // too, otherwise it keeps the terminal busy and blocks the next launch.
+    const runningSource = path.join(dir, "running.asm");
+    const runningProgram = path.join(dir, "running");
+    fs.writeFileSync(
+        runningSource,
+        [
+            "global _start",
+            "section .text",
+            "_start:",
+            "    mov r12, 5",
+            ".loop:",
+            "    inc r12",
+            "    jmp .loop",
+            "",
+        ].join("\n")
+    );
+    execFileSync("nasm", ["-f", "elf64", "-g", "-F", "dwarf", runningSource, "-o", path.join(dir, "running.o")]);
+    execFileSync("ld", ["-o", runningProgram, path.join(dir, "running.o")]);
+
+    const runningClient = new TestDapClient(adapter);
+    try {
+        let response = await runningClient.send("initialize", {
+            adapterID: "nasm",
+            linesStartAt1: true,
+            columnsStartAt1: true,
+            pathFormat: "path",
+        });
+        ok(response.success, "running stop initialize");
+        response = await runningClient.send("launch", {
+            program: runningProgram,
+            cwd: dir,
+            console: "integratedTerminal",
+            stopOnEntry: true,
+            args: [],
+        });
+        ok(response.success, "running stop launch via gdbserver");
+        await runningClient.waitForEvent((e) => e.event === "initialized");
+        response = await runningClient.send("setBreakpoints", {
+            source: { path: runningSource },
+            breakpoints: [{ line: 5 }],
+        });
+        ok(response.body.breakpoints[0].verified === true, "running stop breakpoint verified");
+        await runningClient.send("configurationDone", {});
+        let stopped = await runningClient.waitForEvent((e) => e.event === "stopped");
+        ok(stopped.body.reason === "entry", "running stop stops at entry");
+        await runningClient.send("continue", { threadId: 1 });
+        stopped = await runningClient.waitForEvent((e) => e.event === "stopped");
+        ok(stopped.body.reason === "breakpoint", "running stop reaches breakpoint");
+        await runningClient.send("continue", { threadId: 1 });
+        await new Promise((r) => setTimeout(r, 200));
+
+        response = await runningClient.send("disconnect", { terminateDebuggee: true });
+        ok(response.success, "running stop disconnect");
+        const gdbserverChild = runningClient.terminalProcs[0];
+        const exited = await waitForExit(gdbserverChild, 8000);
+        ok(exited, "gdbserver exits when stopped while the target is running");
+    } finally {
+        runningClient.cleanup();
+    }
+}
+
+function waitForExit(child, timeout) {
+    if (!child || child.exitCode !== null || child.signalCode !== null) {
+        return Promise.resolve(true);
+    }
+    return new Promise((resolve) => {
+        const timer = setTimeout(() => {
+            child.removeListener("exit", onExit);
+            resolve(false);
+        }, timeout);
+        const onExit = () => {
+            clearTimeout(timer);
+            resolve(true);
+        };
+        child.once("exit", onExit);
+    });
 }
 
 (async () => {

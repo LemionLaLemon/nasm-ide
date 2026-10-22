@@ -1,3 +1,7 @@
+# 0.3.2
+
+- Fixed Stop while the target is running leaving `gdbserver` and the inferior program alive in the terminal. The debugger now kills the inferior before closing gdb, so the next launch starts cleanly instead of hanging behind the old terminal session.
+
 # 0.3.1
 
 - Fixed `could not find task 'NASM IDE: make'` when starting the debugger: the extension now activates for `onTaskType:nasm-ide` (and for dynamic debug configurations), so the build task is available before pre-launch task lookup.
