@@ -163,6 +163,56 @@ const ok = (c, m) => {
     ok(debugConfigs[0].preLaunchTask === "NASM IDE: make", "debug provider uses make task");
     fs.rmSync(makeDir, { recursive: true, force: true });
 
+    const configureDir = "/tmp/opencode/nasmide-configure-test";
+    fs.rmSync(configureDir, { recursive: true, force: true });
+    fs.mkdirSync(path.join(configureDir, "src"), { recursive: true });
+    fs.writeFileSync(
+        path.join(configureDir, "Makefile"),
+        "APP := app\nBUILD_DIR := build\nTARGET := $(BUILD_DIR)/$(APP)\n"
+    );
+    fs.mkdirSync(path.join(configureDir, ".vscode"), { recursive: true });
+    fs.writeFileSync(
+        path.join(configureDir, ".vscode", "launch.json"),
+        '{\n  // keep this config\n  "version": "0.2.0",\n  "configurations": [\n    { "type": "cppdbg", "request": "launch", "name": "C thing" },\n  ],\n}\n'
+    );
+    const oldFolders = vscodeStub.workspace.workspaceFolders;
+    vscodeStub.workspace.workspaceFolders = [{ name: "app", uri: { fsPath: configureDir } }];
+    await vscodeStub._cmds["nasmIde.configureDebugging"]();
+    const launch = JSON.parse(fs.readFileSync(path.join(configureDir, ".vscode", "launch.json"), "utf8"));
+    const nasmLaunch = launch.configurations.find((c) => c.type === "nasm");
+    ok(launch.configurations.some((c) => c.name === "C thing"), "configure keeps existing launch configs");
+    ok(nasmLaunch && nasmLaunch.program === "${workspaceFolder}/build/app", "configure detects Makefile target");
+    ok(nasmLaunch && nasmLaunch.preLaunchTask === "NASM IDE: make", "configure wires make pre-launch task");
+    const launchTasks = JSON.parse(fs.readFileSync(path.join(configureDir, ".vscode", "tasks.json"), "utf8"));
+    ok(
+        launchTasks.tasks.some((t) => t.label === "NASM IDE: make" && t.command === "make"),
+        "configure writes make task"
+    );
+    await vscodeStub._cmds["nasmIde.configureDebugging"]();
+    const launchAgain = JSON.parse(fs.readFileSync(path.join(configureDir, ".vscode", "launch.json"), "utf8"));
+    const tasksAgain = JSON.parse(fs.readFileSync(path.join(configureDir, ".vscode", "tasks.json"), "utf8"));
+    ok(launchAgain.configurations.filter((c) => c.type === "nasm").length === 1, "configure is idempotent");
+    ok(tasksAgain.tasks.filter((t) => t.label === "NASM IDE: make").length === 1, "configure reuses task");
+    fs.rmSync(configureDir, { recursive: true, force: true });
+
+    const noMakeDir = "/tmp/opencode/nasmide-configure-nomake";
+    fs.rmSync(noMakeDir, { recursive: true, force: true });
+    fs.mkdirSync(path.join(noMakeDir, "src"), { recursive: true });
+    fs.writeFileSync(path.join(noMakeDir, "src", "main.asm"), "global _start\n_start:\n    ret\n");
+    vscodeStub.workspace.workspaceFolders = [{ name: "nomake", uri: { fsPath: noMakeDir } }];
+    await vscodeStub._cmds["nasmIde.configureDebugging"]();
+    const noMakeLaunch = JSON.parse(fs.readFileSync(path.join(noMakeDir, ".vscode", "launch.json"), "utf8"));
+    const noMakeConfig = noMakeLaunch.configurations.find((c) => c.type === "nasm");
+    ok(noMakeConfig && noMakeConfig.preLaunchTask === "NASM IDE: build", "configure uses build task without Makefile");
+    ok(noMakeConfig && noMakeConfig.program === "${workspaceFolder}/bin/nomake", "configure uses default output path");
+    const noMakeTasks = JSON.parse(fs.readFileSync(path.join(noMakeDir, ".vscode", "tasks.json"), "utf8"));
+    ok(
+        noMakeTasks.tasks.some((t) => t.label === "NASM IDE: build" && t.type === "nasm-ide"),
+        "configure writes extension build task"
+    );
+    vscodeStub.workspace.workspaceFolders = oldFolders;
+    fs.rmSync(noMakeDir, { recursive: true, force: true });
+
     const pkg = require(path.join(__dirname, "..", "package.json"));
     ok(
         pkg.activationEvents.includes("onTaskType:nasm-ide"),

@@ -19,6 +19,16 @@ interface NasmIdeTaskDefinition extends vscode.TaskDefinition {
     operation: "build" | "run" | "clean" | "make";
 }
 
+interface LaunchFile {
+    version?: string;
+    configurations?: Array<Record<string, unknown>>;
+}
+
+interface TasksFile {
+    version?: string;
+    tasks?: Array<Record<string, unknown>>;
+}
+
 let client: LanguageClient | undefined;
 let extensionContext: vscode.ExtensionContext | undefined;
 let asmWatcher: vscode.FileSystemWatcher | undefined;
@@ -122,6 +132,9 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.commands.registerCommand("nasmIde.pickLibraries", async () => {
             await pickLibraries();
         }),
+        vscode.commands.registerCommand("nasmIde.configureDebugging", async () => {
+            await configureDebugging();
+        }),
         vscode.tasks.registerTaskProvider("nasm-ide", new NasmIdeTaskProvider()),
         vscode.debug.registerDebugConfigurationProvider(
             "nasm",
@@ -180,6 +193,207 @@ async function pickLibraries(): Promise<void> {
             ? `NASM IDE: link libraries set to ${picked.map((p) => `-l${p.flag}`).join(" ")}.`
             : "NASM IDE: link library list cleared."
     );
+}
+
+/** Strip line and block comments while preserving string literals. */
+function stripJsonComments(text: string): string {
+    let out = "";
+    let inString = false;
+    let escaped = false;
+    for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        const next = text[i + 1];
+        if (inString) {
+            out += ch;
+            if (escaped) {
+                escaped = false;
+            } else if (ch === "\\") {
+                escaped = true;
+            } else if (ch === '"') {
+                inString = false;
+            }
+            continue;
+        }
+        if (ch === '"') {
+            inString = true;
+            out += ch;
+            continue;
+        }
+        if (ch === "/" && next === "/") {
+            while (i < text.length && text[i] !== "\n") {
+                i++;
+            }
+            out += "\n";
+            continue;
+        }
+        if (ch === "/" && next === "*") {
+            i += 2;
+            while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) {
+                if (text[i] === "\n") {
+                    out += "\n";
+                }
+                i++;
+            }
+            i++;
+            continue;
+        }
+        out += ch;
+    }
+    return out;
+}
+
+function stripTrailingCommas(text: string): string {
+    let out = "";
+    let inString = false;
+    let escaped = false;
+    for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (inString) {
+            out += ch;
+            if (escaped) {
+                escaped = false;
+            } else if (ch === "\\") {
+                escaped = true;
+            } else if (ch === '"') {
+                inString = false;
+            }
+            continue;
+        }
+        if (ch === '"') {
+            inString = true;
+            out += ch;
+            continue;
+        }
+        if (ch === ",") {
+            let j = i + 1;
+            while (j < text.length && /\s/.test(text[j])) {
+                j++;
+            }
+            if (text[j] === "}" || text[j] === "]") {
+                continue;
+            }
+        }
+        out += ch;
+    }
+    return out;
+}
+
+function readJsoncFile<T>(file: string): T | undefined {
+    if (!fs.existsSync(file)) {
+        return undefined;
+    }
+    return JSON.parse(stripTrailingCommas(stripJsonComments(fs.readFileSync(file, "utf8")))) as T;
+}
+
+function writeJsonFile(file: string, value: unknown): void {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `${JSON.stringify(value, null, 4)}\n`, "utf8");
+}
+
+function workspacePath(folder: vscode.WorkspaceFolder, file: string): string {
+    const relative = path.relative(folder.uri.fsPath, file);
+    if (relative && !relative.startsWith("..") && !path.isAbsolute(relative)) {
+        return `\${workspaceFolder}/${relative.split(path.sep).join("/")}`;
+    }
+    return file;
+}
+
+/** Create or update launch.json/tasks.json for the current NASM workspace. */
+export async function configureDebugging(): Promise<void> {
+    const folders = vscode.workspace.workspaceFolders;
+    if (!folders || folders.length === 0) {
+        void vscode.window.showWarningMessage("NASM IDE: open a workspace folder first.");
+        return;
+    }
+    const folder = folders[0];
+    const root = folder.uri.fsPath;
+    const hasMakefile = Boolean(findMakefile(root));
+    const launchFile = path.join(root, ".vscode", "launch.json");
+    const tasksFile = path.join(root, ".vscode", "tasks.json");
+
+    let launchData: LaunchFile;
+    let tasksData: TasksFile;
+    try {
+        launchData = readJsoncFile<LaunchFile>(launchFile) ?? {
+            version: "0.2.0",
+            configurations: [],
+        };
+        tasksData = readJsoncFile<TasksFile>(tasksFile) ?? { version: "2.0.0", tasks: [] };
+    } catch (err) {
+        void vscode.window.showErrorMessage(
+            `NASM IDE: could not parse .vscode/launch.json or tasks.json (${errorText(err)}). Fix the JSON and try again.`
+        );
+        return;
+    }
+    if (!Array.isArray(launchData.configurations)) {
+        launchData.configurations = [];
+    }
+    if (!Array.isArray(tasksData.tasks)) {
+        tasksData.tasks = [];
+    }
+
+    const launchTask = hasMakefile ? "NASM IDE: make" : "NASM IDE: build";
+    const program = detectDebugProgram(folder) ?? path.join(root, "bin", folder.name);
+    const index = launchData.configurations.findIndex(
+        (config) => config.type === "nasm" && config.request === "launch"
+    );
+    const existing = index >= 0 ? launchData.configurations[index] : {};
+    const config: Record<string, unknown> = {
+        ...existing,
+        type: "nasm",
+        request: "launch",
+        name: existing.name ?? "Debug NASM program (gdb)",
+        program: workspacePath(folder, program),
+        cwd: existing.cwd ?? "${workspaceFolder}",
+        console: existing.console ?? "integratedTerminal",
+        stopOnEntry: existing.stopOnEntry ?? true,
+        preLaunchTask: launchTask,
+    };
+    if (index >= 0) {
+        launchData.configurations[index] = config;
+    } else {
+        launchData.configurations.push(config);
+    }
+    launchData.version = launchData.version ?? "0.2.0";
+
+    const taskLabel = launchTask;
+    if (!tasksData.tasks.some((task) => task.label === taskLabel)) {
+        if (hasMakefile) {
+            tasksData.tasks.push({
+                label: taskLabel,
+                type: "shell",
+                command: "make",
+                options: { cwd: "${workspaceFolder}" },
+                group: "build",
+                problemMatcher: ["$gcc"],
+            });
+        } else {
+            tasksData.tasks.push({
+                label: taskLabel,
+                type: "nasm-ide",
+                operation: "build",
+                group: "build",
+            });
+        }
+    }
+    tasksData.version = tasksData.version ?? "2.0.0";
+
+    try {
+        writeJsonFile(launchFile, launchData);
+        writeJsonFile(tasksFile, tasksData);
+    } catch (err) {
+        void vscode.window.showErrorMessage(
+            `NASM IDE: could not write debug configuration (${errorText(err)}).`
+        );
+        return;
+    }
+    void vscode.window.showInformationMessage(
+        `NASM IDE: debugging configured for ${program}. Press F5 to build and debug.`
+    );
+}
+
+function errorText(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
 }
 
 export function deactivate(): Thenable<void> | undefined {

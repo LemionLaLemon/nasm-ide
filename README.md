@@ -139,15 +139,27 @@ per-workspace with `nasmIde.diagnostics.stackCheck: false`.
 ## Commands / tasks
 
 - `NASM IDE: Restart Language Server` · `Show Server Status` ·
-  `Toggle Diagnostics` · `Pick Link Libraries`
+  `Toggle Diagnostics` · `Pick Link Libraries` ·
+  `Configure Debugging`
+- `Configure Debugging` writes `.vscode/launch.json` and `.vscode/tasks.json`
+  for the current workspace. It detects a Makefile target, or falls back to the
+  extension's build output, and keeps any existing configurations.
 - Tasks: `NASM IDE: build` (default build, `Ctrl+Shift+B`), `run`, `clean`,
   and `make` (runs the workspace `Makefile`; also the default pre-launch task
-  when a Makefile exists).
+  when a Makefile exists). A `tasks.json` file is optional: the extension
+  provides these tasks automatically.
 
 ## Debugging
-The debugger is contributed as `nasm` and needs `gdb` (and `gdbserver` for
-terminal launches). Pick **Run and Debug → create a launch.json file → NASM
-(gdb)** or add a configuration by hand:
+Press **F5** and pick **NASM (gdb)**; or run
+**NASM IDE: Configure Debugging** from the Command Palette to create the
+files for you. The command is the quickest way to set up a new project:
+
+1. Open the project root (the folder containing `Makefile` or `src/`).
+2. Run **NASM IDE: Configure Debugging**.
+3. Press **F5**.
+
+For a Makefile project, it uses `NASM IDE: make`; otherwise it uses the
+extension's `NASM IDE: build` task. You can also add a configuration by hand:
 
 ```jsonc
 {

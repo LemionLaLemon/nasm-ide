@@ -1,3 +1,12 @@
+# 0.3.5
+
+- Added **NASM IDE: Configure Debugging** to create `.vscode/launch.json` and
+  `.vscode/tasks.json` automatically. It detects Makefile targets, preserves
+  existing configurations and tasks, and falls back to the extension's build
+  task when there is no Makefile.
+- Documented that `tasks.json` is optional because the extension provides the
+  build, run, clean, and make tasks itself.
+
 # 0.3.4
 
 - Variables can now be edited from the Variables view. Double-click a register, a `.data`/`.bss` scalar, an expanded byte row, or a struct field and enter a new value. Registers accept gdb expressions; data accepts numbers, comma-separated elements, quoted strings, or hex byte lists such as `68 69 00`.
