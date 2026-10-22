@@ -1,3 +1,8 @@
+# 0.3.3
+
+- Added a `Data (.data/.bss)` scope to the debugger. Global data labels are shown with their address, type, and current value. Arrays and strings expand into a byte view, and labels such as `Window:` group their local fields (`.rows`, `.cols`, ...).
+- Data sizes are read from the NASM source instead of relying on incomplete ELF symbol sizes, so strings, reserved buffers, and macro-sized reservations such as `Map resb MapSize * MapSize` display correctly.
+
 # 0.3.2
 
 - Fixed Stop while the target is running leaving `gdbserver` and the inferior program alive in the terminal. The debugger now kills the inferior before closing gdb, so the next launch starts cleanly instead of hanging behind the old terminal session.

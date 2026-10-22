@@ -827,6 +827,14 @@ async function debuggerTests() {
             "    mov eax, 60",
             "    xor edi, edi",
             "    syscall",
+            "section .data",
+            "    TestValue dd 0x1234",
+            '    TestString db "hi", 0',
+            "section .bss",
+            "    TestBuf resb 4",
+            "    TestGroup:",
+            "        .a resw 1",
+            "        .b resw 1",
             "",
         ].join("\n")
     );
@@ -887,6 +895,27 @@ async function debuggerTests() {
         ok(
             response.body.variables.some((v) => v.name === "[rsp+0x00]" && /^0x[0-9a-f]+$/.test(v.value)),
             "debug stack qwords"
+        );
+        const dataRef = scopes.find((s) => s.name === "Data (.data/.bss)").variablesReference;
+        response = await client.send("variables", { variablesReference: dataRef });
+        const dataVariables = response.body.variables;
+        const data = Object.fromEntries(dataVariables.map((v) => [v.name, v.value]));
+        ok(data.TestValue && data.TestValue.includes("0x1234"), "debug .data scalar value");
+        ok(data.TestString && data.TestString.includes("hi"), "debug .data string value");
+        ok(data.TestBuf && data.TestBuf.includes("0x0"), "debug .bss value");
+        const stringVariable = dataVariables.find((v) => v.name === "TestString");
+        ok(stringVariable && stringVariable.variablesReference > 0, "debug data variable expands");
+        response = await client.send("variables", { variablesReference: stringVariable.variablesReference });
+        ok(
+            response.body.variables.some((v) => v.name === "+0x0000" && v.value.includes("68 69 00")),
+            "debug data byte expansion"
+        );
+        const groupVariable = dataVariables.find((v) => v.name === "TestGroup");
+        ok(groupVariable && groupVariable.value === "{2 fields}", "debug data struct group");
+        response = await client.send("variables", { variablesReference: groupVariable.variablesReference });
+        ok(
+            response.body.variables.map((v) => v.name).join(",") === ".a,.b",
+            "debug data struct fields"
         );
 
         response = await client.send("evaluate", { expression: "$r12", context: "watch" });

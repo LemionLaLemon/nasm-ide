@@ -35,6 +35,7 @@ import {
     miQuote,
     miString,
 } from "./gdb";
+import { DataSymbol, loadDataSymbols } from "./dataSymbols";
 
 const THREAD_ID = 1;
 
@@ -84,7 +85,29 @@ interface InstructionBpSpec {
 type ScopeRef =
     | { kind: "registers" }
     | { kind: "flags" }
-    | { kind: "stack" };
+    | { kind: "stack" }
+    | { kind: "data" }
+    | { kind: "dataGroup"; symbol: DataSymbol; children: DataSymbol[] }
+    | { kind: "dataBytes"; address: number; size: number };
+
+const DATA_ELEMENT_SIZES: Record<string, number> = {
+    db: 1,
+    dw: 2,
+    dd: 4,
+    dq: 8,
+    dt: 10,
+    do: 16,
+    dy: 32,
+    dz: 64,
+    resb: 1,
+    resw: 2,
+    resd: 4,
+    resq: 8,
+    rest: 10,
+    reso: 16,
+    resy: 32,
+    resz: 64,
+};
 
 const REGISTER_ORDER = [
     "rax", "rbx", "rcx", "rdx", "rsi", "rdi", "rbp", "rsp",
@@ -188,6 +211,7 @@ class NasmDebugSession extends DebugSession {
     private terminating = false;
     private gdbserverPort: number | null = null;
     private registerNames: string[] | null = null;
+    private dataSymbols: DataSymbol[] | null = null;
     private runInConsole = false;
     private sourceBreakpoints = new Map<string, BreakpointSpec[]>();
     private functionBreakpoints: FunctionBpSpec[] = [];
@@ -262,6 +286,7 @@ class NasmDebugSession extends DebugSession {
         this.program = path.isAbsolute(args.program)
             ? args.program
             : path.resolve(this.cwd, args.program);
+        this.dataSymbols = null;
         if (!fs.existsSync(this.program)) {
             throw new Error(`program not found: ${this.program} (build it first)`);
         }
@@ -316,6 +341,7 @@ class NasmDebugSession extends DebugSession {
                 ? args.program
                 : path.resolve(this.cwd, args.program)
             : "";
+        this.dataSymbols = null;
         this.stopOnEntry = !!args.stopOnEntry;
 
         const gdbPath = args.gdbPath || args.miDebuggerPath || "gdb";
@@ -751,6 +777,7 @@ class NasmDebugSession extends DebugSession {
             scopes: [
                 new Scope("Registers", this.handles.create({ kind: "registers" }), false),
                 new Scope("Flags", this.handles.create({ kind: "flags" }), false),
+                new Scope("Data (.data/.bss)", this.handles.create({ kind: "data" }), false),
                 new Scope("Stack (rsp)", this.handles.create({ kind: "stack" }), false),
             ],
         };
@@ -769,6 +796,12 @@ class NasmDebugSession extends DebugSession {
                 response.body = { variables: await this.registerVariables() };
             } else if (ref.kind === "flags") {
                 response.body = { variables: await this.flagVariables() };
+            } else if (ref.kind === "data") {
+                response.body = { variables: await this.dataVariables() };
+            } else if (ref.kind === "dataGroup") {
+                response.body = { variables: await this.dataGroupVariables(ref) };
+            } else if (ref.kind === "dataBytes") {
+                response.body = { variables: await this.dataByteVariables(ref) };
             } else {
                 response.body = { variables: await this.stackVariables() };
             }
@@ -833,6 +866,309 @@ class NasmDebugSession extends DebugSession {
             variables.push(v);
         }
         return variables;
+    }
+
+    private async dataVariables(): Promise<Variable[]> {
+        const symbols = await this.resolveDataSymbols();
+        if (symbols.length === 0) {
+            return [];
+        }
+        const byName = new Map(symbols.map((symbol) => [symbol.name, symbol]));
+        const parentOf = (name: string): string => {
+            const dot = name.lastIndexOf(".");
+            return dot > 0 ? name.slice(0, dot) : "";
+        };
+        const childrenOf = new Map<string, DataSymbol[]>();
+        for (const symbol of symbols) {
+            const parent = parentOf(symbol.name);
+            if (!parent || !byName.has(parent)) {
+                continue;
+            }
+            const children = childrenOf.get(parent) || [];
+            children.push(symbol);
+            childrenOf.set(parent, children);
+        }
+        const topLevel = symbols
+            .filter((symbol) => {
+                const parent = parentOf(symbol.name);
+                return !parent || !byName.has(parent);
+            })
+            .sort((a, b) => (a.address ?? 0) - (b.address ?? 0) || a.name.localeCompare(b.name));
+        const variables: Variable[] = [];
+        for (const symbol of topLevel) {
+            variables.push(await this.makeDataVariable(symbol, childrenOf.get(symbol.name) || []));
+        }
+        return variables;
+    }
+
+    private async dataGroupVariables(
+        ref: { kind: "dataGroup"; symbol: DataSymbol; children: DataSymbol[] }
+    ): Promise<Variable[]> {
+        const variables: Variable[] = [];
+        for (const child of ref.children) {
+            variables.push(await this.makeDataVariable(child, []));
+        }
+        return variables;
+    }
+
+    private async dataByteVariables(
+        ref: { kind: "dataBytes"; address: number; size: number }
+    ): Promise<Variable[]> {
+        if (ref.size <= 0) {
+            return [];
+        }
+        const shownSize = Math.min(ref.size, 1024);
+        const bytes = await this.readDataBytes(ref.address, shownSize);
+        const variables: Variable[] = [];
+        const perRow = 16;
+        for (let offset = 0; offset < bytes.length; offset += perRow) {
+            const row = bytes.subarray(offset, Math.min(offset + perRow, bytes.length));
+            const hexText = Array.from(row, (byte) => byte.toString(16).padStart(2, "0")).join(" ");
+            const asciiText = Array.from(row, (byte) =>
+                byte >= 0x20 && byte <= 0x7e ? String.fromCharCode(byte) : "."
+            ).join("");
+            const variable = new Variable(
+                `+0x${offset.toString(16).padStart(4, "0")}`,
+                `${hexText.padEnd(perRow * 3 - 1)}  ${asciiText}`
+            ) as DebugProtocol.Variable;
+            variable.type = `${row.length} bytes`;
+            variable.memoryReference = hex(ref.address + offset);
+            variables.push(variable);
+        }
+        if (ref.size > shownSize) {
+            const variable = new Variable("...", `(${ref.size - shownSize} more bytes)`);
+            variables.push(variable);
+        }
+        return variables;
+    }
+
+    private async makeDataVariable(symbol: DataSymbol, children: DataSymbol[]): Promise<Variable> {
+        const address = symbol.address ?? 0;
+        const size = this.dataSize(symbol, children);
+        const element = DATA_ELEMENT_SIZES[symbol.type] || 1;
+        if (children.length > 0) {
+            const variable = new Variable(
+                symbol.displayName,
+                `{${children.length} field${children.length === 1 ? "" : "s"}}`
+            ) as DebugProtocol.Variable;
+            variable.type = `struct @ ${hex(address)}`;
+            variable.memoryReference = hex(address);
+            variable.variablesReference = this.handles.create({
+                kind: "dataGroup",
+                symbol,
+                children,
+            });
+            return variable;
+        }
+        const bytes = size > 0 ? await this.readDataBytes(address, Math.min(size, 4096)) : Buffer.alloc(0);
+        const variable = new Variable(symbol.displayName, this.formatDataValue(symbol, bytes)) as DebugProtocol.Variable;
+        const count = element > 0 ? Math.floor(size / element) : 0;
+        variable.type = size > element || count > 1
+            ? `${symbol.type}[${count}] @ ${hex(address)}`
+            : `${symbol.type} @ ${hex(address)}`;
+        variable.memoryReference = hex(address);
+        if (size > element) {
+            variable.variablesReference = this.handles.create({
+                kind: "dataBytes",
+                address,
+                size,
+            });
+        }
+        return variable;
+    }
+
+    private dataSize(symbol: DataSymbol, children: DataSymbol[]): number {
+        let size = Math.max(0, symbol.size ?? 0);
+        if (children.length > 0) {
+            const base = symbol.address ?? 0;
+            for (const child of children) {
+                const end = (child.address ?? base) + Math.max(0, child.size ?? 0);
+                size = Math.max(size, end - base);
+            }
+        }
+        return size;
+    }
+
+    private formatDataValue(symbol: DataSymbol, bytes: Buffer): string {
+        if (bytes.length === 0) {
+            return "<unavailable>";
+        }
+        const element = DATA_ELEMENT_SIZES[symbol.type] || 1;
+        if (this.looksLikeText(symbol, bytes)) {
+            return this.quoteBytes(bytes);
+        }
+        if (bytes.length <= element) {
+            return this.formatScalar(bytes, element);
+        }
+        if (element <= 8 && bytes.length <= element * 16) {
+            const values: string[] = [];
+            for (let offset = 0; offset + element <= bytes.length; offset += element) {
+                values.push(this.formatScalar(bytes.subarray(offset, offset + element), element));
+            }
+            return `[${values.join(", ")}]`;
+        }
+        const shown = bytes.subarray(0, Math.min(bytes.length, 24));
+        const hexText = Array.from(shown, (byte) => byte.toString(16).padStart(2, "0")).join(" ");
+        return `${hexText}${bytes.length > shown.length ? " ..." : ""} (${bytes.length} bytes)`;
+    }
+
+    private formatScalar(bytes: Buffer, element: number): string {
+        const value = readBufferLittleEndian(bytes, element);
+        let text = hex(value);
+        if (element <= 4) {
+            text += ` (${value})`;
+        }
+        if (element === 1 && value >= 0x20 && value <= 0x7e) {
+            text += ` '${String.fromCharCode(value)}'`;
+        }
+        return text;
+    }
+
+    private looksLikeText(symbol: DataSymbol, bytes: Buffer): boolean {
+        if (symbol.type !== "db" && !symbol.type.startsWith("res")) {
+            return false;
+        }
+        let printable = 0;
+        for (const byte of bytes) {
+            if (byte === 0) {
+                continue;
+            }
+            if (byte >= 0x20 && byte <= 0x7e) {
+                printable++;
+            } else if (byte !== 0x09 && byte !== 0x0a && byte !== 0x0d && byte !== 0x1b) {
+                return false;
+            }
+        }
+        // A .bss buffer that is still all zeroes is more useful as a size.
+        return printable > 0 && (symbol.type === "db" || bytes.includes(0));
+    }
+
+    private quoteBytes(bytes: Buffer): string {
+        let text = '"';
+        const limit = Math.min(bytes.length, 160);
+        for (let i = 0; i < limit; i++) {
+            const byte = bytes[i];
+            if (byte === 0) {
+                text += "\\0";
+            } else if (byte === 0x0a) {
+                text += "\\n";
+            } else if (byte === 0x0d) {
+                text += "\\r";
+            } else if (byte === 0x09) {
+                text += "\\t";
+            } else if (byte === 0x1b) {
+                text += "\\x1b";
+            } else if (byte === 0x22 || byte === 0x5c) {
+                text += `\\${String.fromCharCode(byte)}`;
+            } else if (byte >= 0x20 && byte <= 0x7e) {
+                text += String.fromCharCode(byte);
+            } else {
+                text += `\\x${byte.toString(16).padStart(2, "0")}`;
+            }
+        }
+        if (bytes.length > limit) {
+            text += "...";
+        }
+        return `${text}"`;
+    }
+
+    private async resolveDataSymbols(): Promise<DataSymbol[]> {
+        if (this.dataSymbols) {
+            return this.dataSymbols;
+        }
+        const symbols = loadDataSymbols(this.cwd);
+        if (symbols.length === 0) {
+            this.dataSymbols = [];
+            return symbols;
+        }
+        const addresses = await this.gdbVariableAddresses();
+        const visible = symbols.filter((symbol) => addresses.has(symbol.name));
+        for (const symbol of visible) {
+            symbol.address = addresses.get(symbol.name);
+        }
+        visible.sort((a, b) => (a.address ?? 0) - (b.address ?? 0) || a.name.localeCompare(b.name));
+        for (let i = 0; i < visible.length; i++) {
+            const symbol = visible[i];
+            if (symbol.size !== undefined && symbol.size > 0) {
+                continue;
+            }
+            if (symbol.aggregate) {
+                continue;
+            }
+            let next = i + 1;
+            while (next < visible.length && visible[next].address === symbol.address) {
+                next++;
+            }
+            if (next < visible.length) {
+                symbol.size = Math.max(0, (visible[next].address ?? 0) - (symbol.address ?? 0));
+            } else {
+                const end = addresses.get(symbol.section === ".data" ? "_edata" : "_end");
+                if (end !== undefined && symbol.address !== undefined && end > symbol.address) {
+                    symbol.size = end - symbol.address;
+                }
+            }
+        }
+        // A bare label like `Window:` gets its extent from its local fields.
+        for (const symbol of visible) {
+            if (!symbol.aggregate) {
+                continue;
+            }
+            const base = symbol.address ?? 0;
+            let end = base;
+            for (const child of visible) {
+                if (child.name.startsWith(`${symbol.name}.`)) {
+                    end = Math.max(end, (child.address ?? 0) + (child.size ?? 0));
+                }
+            }
+            if (end > base) {
+                symbol.size = end - base;
+            }
+        }
+        this.dataSymbols = visible;
+        return visible;
+    }
+
+    private async gdbVariableAddresses(): Promise<Map<string, number>> {
+        const gdb = this.requireGdb();
+        let output = "";
+        const listener = (text: string): void => {
+            output += text;
+        };
+        gdb.on("console", listener);
+        try {
+            await gdb.send(
+                `-interpreter-exec console ${miQuote("info variables")}`,
+                15000
+            );
+        } catch {
+            return new Map();
+        } finally {
+            gdb.removeListener("console", listener);
+        }
+        const addresses = new Map<string, number>();
+        for (const line of output.split(/\r?\n/)) {
+            const match = /^\s*(0x[0-9a-f]+)\s+(.+?)\s*$/i.exec(line);
+            if (match) {
+                addresses.set(match[2], parseInt(match[1], 16));
+            }
+        }
+        return addresses;
+    }
+
+    private async readDataBytes(address: number, size: number): Promise<Buffer> {
+        if (size <= 0) {
+            return Buffer.alloc(0);
+        }
+        try {
+            const rec = await (this.gdb as GdbMi).send(
+                `-data-read-memory-bytes ${hex(address)} ${Math.min(size, 65536)}`
+            );
+            const blocks = asArray(rec.results.memory).map((entry) => asTuple(entry));
+            const contents = blocks.map((block) => miString(block.contents)).join("");
+            return Buffer.from(contents, "hex").subarray(0, size);
+        } catch {
+            return Buffer.alloc(0);
+        }
     }
 
     private async stackVariables(): Promise<Variable[]> {
@@ -1326,6 +1662,14 @@ function readLittleEndian(hexWord: string): number {
     let value = 0n;
     for (let i = 0; i < hexWord.length; i += 2) {
         value |= BigInt(parseInt(hexWord.slice(i, i + 2), 16)) << BigInt((i / 2) * 8);
+    }
+    return Number(value & 0xffffffffffffffffn);
+}
+
+function readBufferLittleEndian(bytes: Buffer, width: number): number {
+    let value = 0n;
+    for (let i = 0; i < width && i < bytes.length; i++) {
+        value |= BigInt(bytes[i]) << BigInt(i * 8);
     }
     return Number(value & 0xffffffffffffffffn);
 }

@@ -36,9 +36,9 @@ substantially extended here. License: MIT, see `LICENSE.md`.
 - As-you-type (debounced) or on-save diagnostics.
 - `NASM IDE: Pick Link Libraries` - fuzzy-search every linkable `-l` flag
   on your system, saved to the workspace.
-- gdb debugger: source/instruction breakpoints, registers, flags, stack,
-  call stack, disassembly, memory, restart. Launch in a terminal for ncurses
-  and X11, or in the Debug Console for headless programs (see below).
+- gdb debugger: source/instruction breakpoints, registers, flags, `.data`/`.bss`
+  globals, stack, call stack, disassembly, memory, restart. Launch in a terminal
+  for ncurses and X11, or in the Debug Console for headless programs (see below).
 
 ## Library documentation
 
@@ -169,7 +169,10 @@ programs keep the integrated/external terminal, and debug the output that
 keeps its DWARF symbols (not a `-stripped` binary).
 
 The Debug Console accepts gdb commands such as `x/16gx $rsp` and
-`info registers`. Register, flag, and `rsp` scopes refresh on each stop.
+`info registers`. Register, flag, `.data`/`.bss`, and `rsp` scopes refresh on
+each stop. The Data scope reads variable sizes from your NASM declarations, so
+strings and `resb`/`resd` buffers get sensible values; arrays expand into a
+byte view, and labels like `Window:` group their `.field` children.
 Breakpoints can be conditional or have a hit count. To attach to an already
 running program, use a `"request": "attach"` configuration with either
 `processId` or `host`/`port` (gdbserver).
