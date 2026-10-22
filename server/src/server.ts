@@ -503,7 +503,7 @@ connection.onCompletion((params): CompletionItem[] => {
                     });
                 }
             }
-            return suppressExactMatch(items, lowerPrefix);
+            return items;
         }
     } else if (!lowerPrefix.includes(".")) {
         // Bare struct names complete as types.
@@ -576,7 +576,7 @@ connection.onCompletion((params): CompletionItem[] => {
             }
         }
     }
-    return suppressExactMatch(items, lowerPrefix);
+    return items;
 });
 
 connection.onHover((params): Hover | null => {
@@ -805,16 +805,6 @@ connection.onDefinition((params): Definition | null => {
     };
     return location;
 });
-
-/** If the typed token already is a complete candidate, return nothing. This
- *  keeps the suggestion widget from staying open (and eating Enter) after a
- *  finished operand such as `mov r12, r13`. */
-function suppressExactMatch(items: CompletionItem[], lowerPrefix: string): CompletionItem[] {
-    if (!lowerPrefix) {
-        return items;
-    }
-    return items.some((item) => item.label.toLowerCase() === lowerPrefix) ? [] : items;
-}
 
 function getWordRangeAt(text: string, offset: number): { start: number; end: number } | null {
     if (offset < 0 || offset > text.length) {

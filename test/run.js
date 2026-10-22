@@ -358,7 +358,8 @@ async function integration() {
         textDocument: { uri: scUri },
         position: { line: 2, character: "    mov r12, r13".length },
     });
-    ok((compDone.result || []).length === 0, "exact operand suppresses completion (r13)");
+    const doneLabels = (compDone.result || []).map((i) => i.label);
+    ok(doneLabels.includes("r13") && doneLabels.includes("r13d"), "completed token still completes (no server-side suppression)");
 
     const compLo = await c.req("textDocument/completion", {
         textDocument: { uri: scUri },

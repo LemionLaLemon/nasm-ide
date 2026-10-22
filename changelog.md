@@ -1,3 +1,8 @@
+# 0.2.7
+
+- Reverted "don't complete a finished token": VS Code's own word suggestions keep the widget open anyway, so hiding our items just removed useful candidates. Enter behavior is controlled by `editor.acceptSuggestionOnEnter` / `editor.wordBasedSuggestions` (scoped `[nasm]` settings work).
+- Kept the 0.2.6 improvements: scoped local labels, emoji labels, and matching on the text before the caret.
+
 # 0.2.6
 
 - Completion no longer opens (or eats Enter) for a token that is already complete. Finishing `mov r12, r13` leaves the cursor alone until you press Enter once.
