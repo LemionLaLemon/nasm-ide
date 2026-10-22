@@ -164,6 +164,10 @@ const ok = (c, m) => {
     fs.rmSync(makeDir, { recursive: true, force: true });
 
     const pkg = require(path.join(__dirname, "..", "package.json"));
+    ok(
+        pkg.activationEvents.includes("onTaskType:nasm-ide"),
+        "extension activates for nasm-ide task lookup"
+    );
     const props = pkg.contributes.configuration.properties;
     ok(props["nasmIde.libraries"].scope === "resource", "libraries allows folder scope");
     for (const k of Object.keys(props).filter((x) => x.startsWith("nasmIde.build."))) {

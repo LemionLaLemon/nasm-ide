@@ -1,3 +1,8 @@
+# 0.3.1
+
+- Fixed `could not find task 'NASM IDE: make'` when starting the debugger: the extension now activates for `onTaskType:nasm-ide` (and for dynamic debug configurations), so the build task is available before pre-launch task lookup.
+- Makefile detection also accepts `makefile` and `GNUmakefile`, not only `Makefile`.
+
 # 0.3.0
 
 - Added a gdb-based debugger for NASM (`type: "nasm"`), with launch and attach configurations.

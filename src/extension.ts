@@ -189,6 +189,16 @@ export function deactivate(): Thenable<void> | undefined {
     return client.stop();
 }
 
+export function findMakefile(root: string): string | undefined {
+    for (const name of ["Makefile", "makefile", "GNUmakefile"]) {
+        const candidate = path.join(root, name);
+        if (fs.existsSync(candidate)) {
+            return candidate;
+        }
+    }
+    return undefined;
+}
+
 function substVars(value: string, folder: vscode.WorkspaceFolder): string {
     return value
         .replace(/\$\{workspaceFolderBasename\}/g, folder.name)
@@ -206,7 +216,7 @@ class NasmIdeTaskProvider implements vscode.TaskProvider {
             await this.buildTask(folder, "run"),
             await this.buildTask(folder, "clean"),
         ];
-        if (fs.existsSync(path.join(folder.uri.fsPath, "Makefile"))) {
+        if (findMakefile(folder.uri.fsPath)) {
             tasks.push(await this.buildTask(folder, "make"));
         }
         return tasks;
@@ -313,7 +323,7 @@ class NasmDebugConfigurationProvider implements vscode.DebugConfigurationProvide
             return [];
         }
         const program = detectDebugProgram(folder) || "${workspaceFolder}/bin/${workspaceFolderBasename}";
-        const hasMakefile = fs.existsSync(path.join(folder.uri.fsPath, "Makefile"));
+        const hasMakefile = Boolean(findMakefile(folder.uri.fsPath));
         return [
             {
                 type: "nasm",
@@ -368,7 +378,7 @@ class NasmDebugConfigurationProvider implements vscode.DebugConfigurationProvide
         if (
             config.request === "launch" &&
             !config.preLaunchTask &&
-            fs.existsSync(path.join(workspace.uri.fsPath, "Makefile"))
+            findMakefile(workspace.uri.fsPath)
         ) {
             config.preLaunchTask = "NASM IDE: make";
         }
@@ -378,8 +388,8 @@ class NasmDebugConfigurationProvider implements vscode.DebugConfigurationProvide
 
 function detectDebugProgram(folder: vscode.WorkspaceFolder): string | undefined {
     const root = folder.uri.fsPath;
-    const makefile = path.join(root, "Makefile");
-    if (fs.existsSync(makefile)) {
+    const makefile = findMakefile(root);
+    if (makefile) {
         try {
             const text = fs.readFileSync(makefile, "utf8");
             const vars = parseMakeVariables(text);
