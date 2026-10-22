@@ -1,5 +1,5 @@
 // nasm-ide test suite: unit + LSP integration. Run with `npm test`.
-const { spawn, execSync } = require("child_process");
+const { spawn, spawnSync, execSync, execFileSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const ROOT = path.join(__dirname, "..");
@@ -657,10 +657,321 @@ async function integration() {
     c.proc.kill();
 }
 
+
+// ---------------------------------------------------------------- debugger
+// A tiny DAP client so the debug adapter can be exercised without VS Code.
+class TestDapClient {
+    constructor(adapter) {
+        this.proc = spawn(process.execPath, [adapter], { stdio: ["pipe", "pipe", "pipe"] });
+        this.buffer = Buffer.alloc(0);
+        this.seq = 1;
+        this.pending = new Map();
+        this.events = [];
+        this.waiters = [];
+        this.terminalProcs = [];
+        this.stderr = "";
+        this.proc.stdout.on("data", (d) => this.onData(d));
+        this.proc.stderr.on("data", (d) => (this.stderr += d.toString()));
+    }
+    onData(chunk) {
+        this.buffer = Buffer.concat([this.buffer, chunk]);
+        for (;;) {
+            const headerEnd = this.buffer.indexOf("\r\n\r\n");
+            if (headerEnd < 0) break;
+            const header = this.buffer.slice(0, headerEnd).toString();
+            const match = /Content-Length:\s*(\d+)/i.exec(header);
+            if (!match) break;
+            const length = parseInt(match[1], 10);
+            if (this.buffer.length < headerEnd + 4 + length) break;
+            const message = JSON.parse(this.buffer.slice(headerEnd + 4, headerEnd + 4 + length).toString());
+            this.buffer = this.buffer.slice(headerEnd + 4 + length);
+            if (message.type === "response") {
+                const resolve = this.pending.get(message.request_seq);
+                if (resolve) {
+                    this.pending.delete(message.request_seq);
+                    resolve(message);
+                }
+            } else if (message.type === "event") {
+                this.events.push(message);
+                for (const waiter of [...this.waiters]) {
+                    if (waiter.match(message)) {
+                        this.waiters.splice(this.waiters.indexOf(waiter), 1);
+                        const index = this.events.indexOf(message);
+                        if (index >= 0) this.events.splice(index, 1);
+                        waiter.resolve(message);
+                    }
+                }
+            } else if (message.type === "request" && message.command === "runInTerminal") {
+                const args = message.arguments.args || [];
+                const child = spawn(args[0], args.slice(1), {
+                    cwd: message.arguments.cwd,
+                    detached: true,
+                    stdio: "ignore",
+                });
+                this.terminalProcs.push(child);
+                this.respond(message, { processId: child.pid });
+            }
+        }
+    }
+    respond(request, body) {
+        const message = {
+            seq: this.seq++,
+            type: "response",
+            request_seq: request.seq,
+            success: true,
+            command: request.command,
+            body,
+        };
+        this.write(message);
+    }
+    write(message) {
+        const text = JSON.stringify(message);
+        this.proc.stdin.write(`Content-Length: ${Buffer.byteLength(text)}\r\n\r\n${text}`);
+    }
+    send(command, args) {
+        const seq = this.seq++;
+        const message = { seq, type: "request", command };
+        if (args) message.arguments = args;
+        return new Promise((resolve, reject) => {
+            this.pending.set(seq, resolve);
+            this.write(message);
+            setTimeout(() => {
+                if (this.pending.has(seq)) {
+                    this.pending.delete(seq);
+                    reject(new Error(`DAP ${command} timed out`));
+                }
+            }, 15000);
+        });
+    }
+    waitForEvent(predicate, timeout = 15000) {
+        const existing = this.events.find(predicate);
+        if (existing) {
+            this.events.splice(this.events.indexOf(existing), 1);
+            return Promise.resolve(existing);
+        }
+        return new Promise((resolve, reject) => {
+            const waiter = { match: predicate, resolve };
+            this.waiters.push(waiter);
+            setTimeout(() => {
+                const index = this.waiters.indexOf(waiter);
+                if (index >= 0) {
+                    this.waiters.splice(index, 1);
+                    reject(new Error("timed out waiting for DAP event"));
+                }
+            }, timeout);
+        });
+    }
+    cleanup() {
+        for (const child of this.terminalProcs) {
+            try {
+                process.kill(-child.pid, "SIGKILL");
+            } catch {
+                try {
+                    child.kill("SIGKILL");
+                } catch {
+                    // ignore
+                }
+            }
+        }
+        try {
+            this.proc.kill("SIGKILL");
+        } catch {
+            // ignore
+        }
+    }
+}
+
+async function debuggerTests() {
+    const G = require(path.join(ROOT, "out", "gdb.js"));
+    const record = G.parseMiRecord(
+        '7^done,stack=[frame={level="0",addr="0x401000",func="main"},frame={level="1",addr="0x1"}],register-names=["rax","rbx"]'
+    );
+    ok(
+        record && record.token === 7 && record.className === "done" && record.results.stack.length === 2,
+        "MI record parses result lists"
+    );
+    ok(
+        record.results.stack[0].func === "main" && record.results["register-names"][1] === "rbx",
+        "MI values parse tuples/strings"
+    );
+    const stream = G.parseMiRecord('~"hello\\n"');
+    ok(stream && stream.stream === "hello\n", "MI console stream unescapes");
+    ok(G.miString('"a b"') === '"a b"', "MI bare string is untouched");
+
+    const gdb = spawnSync("gdb", ["--version"]);
+    const nasm = spawnSync("nasm", ["-v"]);
+    const ld = spawnSync("ld", ["--version"]);
+    const gdbserver = spawnSync("gdbserver", ["--version"]);
+    if (gdb.status !== 0 || nasm.status !== 0 || ld.status !== 0 || gdbserver.status !== 0) {
+        console.log("skip: gdb/nasm/ld/gdbserver not all installed");
+        return;
+    }
+
+    const dir = "/tmp/opencode/nasm-ide-debug-test";
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.mkdirSync(dir, { recursive: true });
+    const source = path.join(dir, "test.asm");
+    const program = path.join(dir, "test");
+    fs.writeFileSync(
+        source,
+        [
+            "default rel",
+            "global _start",
+            "section .text",
+            "_start:",
+            "    mov r12, 5",
+            "    mov r13, 7",
+            ".loop:",
+            "    dec r12",
+            "    jnz .loop",
+            "    mov eax, 60",
+            "    xor edi, edi",
+            "    syscall",
+            "",
+        ].join("\n")
+    );
+    execFileSync("nasm", ["-f", "elf64", "-g", "-F", "dwarf", source, "-o", path.join(dir, "test.o")]);
+    execFileSync("ld", ["-o", program, path.join(dir, "test.o")]);
+
+    const adapter = path.join(ROOT, "out", "debugAdapter.js");
+    const client = new TestDapClient(adapter);
+    try {
+        let response = await client.send("initialize", {
+            adapterID: "nasm",
+            linesStartAt1: true,
+            columnsStartAt1: true,
+            pathFormat: "path",
+        });
+        ok(response.success, "debug initialize");
+        response = await client.send("launch", {
+            program,
+            cwd: dir,
+            console: "internalConsole",
+            stopOnEntry: false,
+            args: [],
+        });
+        ok(response.success, "debug launch (internalConsole)");
+        await client.waitForEvent((e) => e.event === "initialized");
+        response = await client.send("setBreakpoints", {
+            source: { path: source },
+            breakpoints: [{ line: 8 }],
+        });
+        ok(response.body.breakpoints[0].verified === true, "debug source breakpoint verified");
+        response = await client.send("configurationDone", {});
+        ok(response.success, "debug configurationDone");
+
+        let stopped = await client.waitForEvent((e) => e.event === "stopped");
+        ok(stopped.body.reason === "breakpoint", "debug stops at breakpoint");
+        ok((stopped.body.hitBreakpointIds || []).length === 1, "debug reports breakpoint id");
+
+        response = await client.send("threads", {});
+        ok(response.body.threads.length >= 1, "debug threads");
+        response = await client.send("stackTrace", { threadId: 1, startFrame: 0, levels: 4 });
+        const frame = response.body.stackFrames[0];
+        ok(frame.name.includes("_start.loop") && frame.line === 8, "debug stack frame has asm symbol/line");
+        ok(/^0x[0-9a-f]+$/i.test(frame.instructionPointerReference), "debug frame has instruction pointer");
+
+        response = await client.send("scopes", { frameId: frame.id });
+        const scopes = response.body.scopes;
+        const registersRef = scopes.find((s) => s.name === "Registers").variablesReference;
+        const flagsRef = scopes.find((s) => s.name === "Flags").variablesReference;
+        const stackRef = scopes.find((s) => s.name === "Stack (rsp)").variablesReference;
+        response = await client.send("variables", { variablesReference: registersRef });
+        const registers = Object.fromEntries(response.body.variables.map((v) => [v.name, v.value]));
+        ok(registers.r12 === "0x5" && registers.r13 === "0x7", "debug registers r12/r13");
+        ok(/^0x7[0-9a-f]+$/i.test(registers.rsp), "debug rsp register");
+        response = await client.send("variables", { variablesReference: flagsRef });
+        const flags = Object.fromEntries(response.body.variables.map((v) => [v.name, v.value]));
+        ok(flags.RFLAGS && flags.CF !== undefined && flags.ZF !== undefined, "debug flags decoded");
+        response = await client.send("variables", { variablesReference: stackRef });
+        ok(
+            response.body.variables.some((v) => v.name === "[rsp+0x00]" && /^0x[0-9a-f]+$/.test(v.value)),
+            "debug stack qwords"
+        );
+
+        response = await client.send("evaluate", { expression: "$r12", context: "watch" });
+        ok(response.body.result === "5", "debug evaluate register");
+        response = await client.send("disassemble", {
+            memoryReference: frame.instructionPointerReference,
+            offset: 0,
+            instructionOffset: 0,
+            instructionCount: 4,
+            resolveSymbols: true,
+        });
+        ok(
+            response.body.instructions.length >= 2 && /dec/i.test(response.body.instructions[0].instruction),
+            "debug disassembly at rip"
+        );
+        response = await client.send("readMemory", {
+            memoryReference: registers.rsp,
+            offset: 0,
+            count: 16,
+        });
+        ok(
+            response.body.data && Buffer.from(response.body.data, "base64").length === 16,
+            "debug read memory"
+        );
+
+        response = await client.send("next", { threadId: 1, granularity: "instruction" });
+        ok(response.success, "debug next instruction");
+        stopped = await client.waitForEvent((e) => e.event === "stopped");
+        ok(stopped.body.reason === "step", "debug step stop reason");
+
+        response = await client.send("restart", {});
+        ok(response.success, "debug restart");
+        stopped = await client.waitForEvent((e) => e.event === "stopped");
+        ok(stopped.body.reason === "breakpoint", "debug breakpoint survives restart");
+
+        response = await client.send("disconnect", { terminateDebuggee: true });
+        ok(response.success, "debug disconnect");
+    } finally {
+        client.cleanup();
+    }
+
+    // Terminal/gdbserver path: the fake client starts gdbserver for runInTerminal.
+    const terminalClient = new TestDapClient(adapter);
+    try {
+        let response = await terminalClient.send("initialize", {
+            adapterID: "nasm",
+            linesStartAt1: true,
+            columnsStartAt1: true,
+            pathFormat: "path",
+        });
+        ok(response.success, "terminal debug initialize");
+        response = await terminalClient.send("launch", {
+            program,
+            cwd: dir,
+            console: "integratedTerminal",
+            stopOnEntry: true,
+            args: [],
+        });
+        ok(response.success, "terminal debug launch via gdbserver");
+        await terminalClient.waitForEvent((e) => e.event === "initialized");
+        response = await terminalClient.send("setBreakpoints", {
+            source: { path: source },
+            breakpoints: [{ line: 8 }],
+        });
+        ok(response.body.breakpoints[0].verified === true, "terminal breakpoint verified");
+        await terminalClient.send("configurationDone", {});
+        let stopped = await terminalClient.waitForEvent((e) => e.event === "stopped");
+        ok(stopped.body.reason === "entry", "terminal gdbserver stops at entry");
+        response = await terminalClient.send("continue", { threadId: 1 });
+        stopped = await terminalClient.waitForEvent((e) => e.event === "stopped");
+        ok(stopped.body.reason === "breakpoint", "terminal gdbserver reaches breakpoint");
+        response = await terminalClient.send("evaluate", { expression: "$r12", context: "watch" });
+        ok(response.body.result === "5", "terminal gdbserver register read");
+        response = await terminalClient.send("disconnect", { terminateDebuggee: true });
+        ok(response.success, "terminal debug disconnect");
+    } finally {
+        terminalClient.cleanup();
+    }
+}
+
 (async () => {
     try {
         unit();
         await integration();
+        await debuggerTests();
     } catch (e) {
         console.error("HARNESS ERROR:", e);
         fails++;

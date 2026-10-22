@@ -1,6 +1,7 @@
 // Headless test for the client (out/extension.js): task provider command
 // construction + pickLibraries flow, with stubbed vscode/languageclient.
 const Module = require("module");
+const fs = require("fs");
 const path = require("path");
 
 const calls = { configUpdates: [], picks: null };
@@ -29,6 +30,12 @@ const vscodeStub = {
     },
     commands: { registerCommand: (id, fn) => { vscodeStub._cmds[id] = fn; return { dispose() {} }; } },
     tasks: { registerTaskProvider: (type, provider) => { vscodeStub._provider = provider; return { dispose() {} }; } },
+    debug: {
+        registerDebugConfigurationProvider: (type, provider) => {
+            vscodeStub._debugProvider = provider;
+            return { dispose() {} };
+        },
+    },
     window: {
         showQuickPick: async (items) => {
             calls.picks = items.map((i) => i.label);
@@ -56,6 +63,7 @@ const vscodeStub = {
     ConfigurationTarget: { Workspace: 1, WorkspaceFolder: 2 },
     _cmds: {},
     _provider: null,
+    _debugProvider: null,
 };
 // getConfiguration with section-aware canned values
 vscodeStub.workspace.getConfiguration = (section) => ({
@@ -138,6 +146,22 @@ const ok = (c, m) => {
     await vscodeStub._cmds["nasmIde.toggleDiagnostics"]();
     const tog = calls.configUpdates.find(([k]) => k === "nasmIde.diagnostics.enable");
     ok(tog && tog[1] === false, "toggle flips diagnostics.enable");
+
+    const makeDir = "/tmp/opencode/nasmide-make-test";
+    fs.rmSync(makeDir, { recursive: true, force: true });
+    fs.mkdirSync(path.join(makeDir, "build"), { recursive: true });
+    fs.writeFileSync(
+        path.join(makeDir, "Makefile"),
+        "APP := deforest\nBUILD_DIR := build\nTARGET := $(BUILD_DIR)/$(APP)\n"
+    );
+    const makeFolder = { name: "deforest", uri: { fsPath: makeDir } };
+    const debugConfigs = vscodeStub._debugProvider.provideDebugConfigurations(makeFolder);
+    ok(
+        debugConfigs[0].program === path.join(makeDir, "build/deforest"),
+        "debug provider detects Makefile target: " + debugConfigs[0].program
+    );
+    ok(debugConfigs[0].preLaunchTask === "NASM IDE: make", "debug provider uses make task");
+    fs.rmSync(makeDir, { recursive: true, force: true });
 
     const pkg = require(path.join(__dirname, "..", "package.json"));
     const props = pkg.contributes.configuration.properties;

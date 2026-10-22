@@ -1,4 +1,5 @@
 // NASM IDE client: language client, commands, and build/link task provider.
+import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 import {
@@ -15,7 +16,7 @@ interface LibraryCandidate {
 }
 
 interface NasmIdeTaskDefinition extends vscode.TaskDefinition {
-    operation: "build" | "run" | "clean";
+    operation: "build" | "run" | "clean" | "make";
 }
 
 let client: LanguageClient | undefined;
@@ -122,6 +123,10 @@ export function activate(context: vscode.ExtensionContext): void {
             await pickLibraries();
         }),
         vscode.tasks.registerTaskProvider("nasm-ide", new NasmIdeTaskProvider()),
+        vscode.debug.registerDebugConfigurationProvider(
+            "nasm",
+            new NasmDebugConfigurationProvider()
+        ),
         watcher,
         { dispose: () => client?.stop() }
     );
@@ -196,18 +201,28 @@ class NasmIdeTaskProvider implements vscode.TaskProvider {
         if (!folder) {
             return [];
         }
-        return [
+        const tasks = [
             await this.buildTask(folder, "build"),
             await this.buildTask(folder, "run"),
             await this.buildTask(folder, "clean"),
         ];
+        if (fs.existsSync(path.join(folder.uri.fsPath, "Makefile"))) {
+            tasks.push(await this.buildTask(folder, "make"));
+        }
+        return tasks;
     }
 
     public async resolveTask(task: vscode.Task): Promise<vscode.Task | undefined> {
         const def = task.definition as NasmIdeTaskDefinition;
         const folder =
             (task.scope as vscode.WorkspaceFolder | undefined) ?? vscode.workspace.workspaceFolders?.[0];
-        if (!folder || (def.operation !== "build" && def.operation !== "run" && def.operation !== "clean")) {
+        if (
+            !folder ||
+            (def.operation !== "build" &&
+                def.operation !== "run" &&
+                def.operation !== "clean" &&
+                def.operation !== "make")
+        ) {
             return undefined;
         }
         return this.buildTask(folder, def.operation);
@@ -215,7 +230,7 @@ class NasmIdeTaskProvider implements vscode.TaskProvider {
 
     private async buildTask(
         folder: vscode.WorkspaceFolder,
-        operation: "build" | "run" | "clean"
+        operation: "build" | "run" | "clean" | "make"
     ): Promise<vscode.Task> {
         const config = vscode.workspace.getConfiguration("nasmIde", folder.uri);
         const nasmPath = config.get<string>("nasmPath", "nasm");
@@ -232,7 +247,11 @@ class NasmIdeTaskProvider implements vscode.TaskProvider {
         let command: string;
         let problemMatchers: string[];
         let group: vscode.TaskGroup | undefined;
-        if (operation === "clean") {
+        if (operation === "make") {
+            command = "make";
+            problemMatchers = ["$gcc"];
+            group = vscode.TaskGroup.Build;
+        } else if (operation === "clean") {
             command = `rm -rf ${q(objDir)} ${q(output)}`;
             problemMatchers = [];
         } else {
@@ -279,4 +298,164 @@ class NasmIdeTaskProvider implements vscode.TaskProvider {
         }
         return task;
     }
+}
+
+/**
+ * Fills in launch defaults. The debug adapter itself only needs a program;
+ * this makes the common cases (a Makefile in the workspace, or the extension's
+ * own build task) work without hand-writing paths.
+ */
+class NasmDebugConfigurationProvider implements vscode.DebugConfigurationProvider {
+    public provideDebugConfigurations(
+        folder: vscode.WorkspaceFolder | undefined
+    ): vscode.ProviderResult<vscode.DebugConfiguration[]> {
+        if (!folder) {
+            return [];
+        }
+        const program = detectDebugProgram(folder) || "${workspaceFolder}/bin/${workspaceFolderBasename}";
+        const hasMakefile = fs.existsSync(path.join(folder.uri.fsPath, "Makefile"));
+        return [
+            {
+                type: "nasm",
+                request: "launch",
+                name: "Debug NASM program (gdb)",
+                program,
+                cwd: "${workspaceFolder}",
+                console: "integratedTerminal",
+                stopOnEntry: true,
+                preLaunchTask: hasMakefile ? "NASM IDE: make" : "NASM IDE: build",
+            },
+            {
+                type: "nasm",
+                request: "attach",
+                name: "Attach to gdbserver",
+                host: "127.0.0.1",
+                port: 1234,
+                program,
+                cwd: "${workspaceFolder}",
+            },
+        ];
+    }
+
+    public resolveDebugConfiguration(
+        folder: vscode.WorkspaceFolder | undefined,
+        config: vscode.DebugConfiguration
+    ): vscode.ProviderResult<vscode.DebugConfiguration> {
+        if (!config.type && !config.request) {
+            config.type = "nasm";
+            config.request = "launch";
+            config.name = "Debug NASM program (gdb)";
+        }
+        const workspace = folder ?? vscode.workspace.workspaceFolders?.[0];
+        if (!workspace) {
+            return config;
+        }
+        if (!config.cwd) {
+            config.cwd = workspace.uri.fsPath;
+        }
+        if (!config.program && config.request !== "attach") {
+            config.program = detectDebugProgram(workspace);
+        }
+        if (!config.program && config.request !== "attach") {
+            void vscode.window.showErrorMessage(
+                "NASM IDE: set \"program\" in launch.json to the built ELF file."
+            );
+            return undefined;
+        }
+        if (!config.console) {
+            config.console = "integratedTerminal";
+        }
+        if (
+            config.request === "launch" &&
+            !config.preLaunchTask &&
+            fs.existsSync(path.join(workspace.uri.fsPath, "Makefile"))
+        ) {
+            config.preLaunchTask = "NASM IDE: make";
+        }
+        return config;
+    }
+}
+
+function detectDebugProgram(folder: vscode.WorkspaceFolder): string | undefined {
+    const root = folder.uri.fsPath;
+    const makefile = path.join(root, "Makefile");
+    if (fs.existsSync(makefile)) {
+        try {
+            const text = fs.readFileSync(makefile, "utf8");
+            const vars = parseMakeVariables(text);
+            const expand = (value: string): string => {
+                let out = value;
+                for (let i = 0; i < 6; i++) {
+                    const next = out.replace(/\$\(([^)]+)\)|\$\{([^}]+)\}/g, (_m, a, b) => {
+                        return vars.get(a || b) ?? "";
+                    });
+                    if (next === out) {
+                        break;
+                    }
+                    out = next;
+                }
+                return out.trim();
+            };
+            const candidates = [
+                expand(vars.get("TARGET") || ""),
+                expand(vars.get("OUTPUT") || ""),
+                expand(vars.get("PROGRAM") || ""),
+                [expand(vars.get("BUILD_DIR") || ""), expand(vars.get("APP") || vars.get("NAME") || "")]
+                    .filter(Boolean)
+                    .join("/"),
+            ].filter((candidate) => candidate.length > 0);
+            if (candidates.length > 0) {
+                const candidate = candidates[0];
+                return path.isAbsolute(candidate) ? candidate : path.resolve(root, candidate);
+            }
+        } catch {
+            // fall through to directory scan
+        }
+    }
+    for (const dir of ["build", "bin", "out"]) {
+        const full = path.join(root, dir);
+        if (!fs.existsSync(full)) {
+            continue;
+        }
+        try {
+            const found = fs
+                .readdirSync(full)
+                .filter((name) => !name.endsWith(".o") && !name.endsWith(".d") && !name.endsWith(".a"))
+                .filter((name) => !name.endsWith("-stripped"))
+                .map((name) => path.join(full, name))
+                .filter((file) => {
+                    try {
+                        const stat = fs.statSync(file);
+                        return stat.isFile() && (stat.mode & 0o111) !== 0;
+                    } catch {
+                        return false;
+                    }
+                })
+                .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+            if (found.length > 0) {
+                return found[0];
+            }
+        } catch {
+            // ignore unreadable directories
+        }
+    }
+    const configured = vscode.workspace
+        .getConfiguration("nasmIde", folder.uri)
+        .get<string>("build.output", "bin/${workspaceFolderBasename}");
+    const expanded = substVars(configured, folder);
+    return path.isAbsolute(expanded) ? expanded : path.resolve(root, expanded);
+}
+
+function parseMakeVariables(text: string): Map<string, string> {
+    const vars = new Map<string, string>();
+    const re = /^([A-Za-z_][A-Za-z0-9_]*)\s*(?::=|=|\?=)\s*(.*?)\s*(?:#.*)?$/gm;
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(text)) !== null) {
+        const key = match[1];
+        const value = match[2].trim();
+        if (key && !vars.has(key)) {
+            vars.set(key, value);
+        }
+    }
+    return vars;
 }

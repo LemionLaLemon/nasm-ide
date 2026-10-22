@@ -1,3 +1,13 @@
+# 0.3.0
+
+- Added a gdb-based debugger for NASM (`type: "nasm"`), with launch and attach configurations.
+- Programs that need a terminal (ncurses, X11, interactive stdin) launch through `gdbserver` in an integrated or external terminal. Lightweight/headless programs can use `"console": "internalConsole"` for direct gdb I/O.
+- Source, function, conditional, hit-count, and instruction breakpoints; continue, pause, source/instruction stepping, and step out.
+- Scopes for registers, decoded flags (CF/PF/AF/ZF/SF/TF/IF/DF/OF/...), and the 16 qwords at `rsp`.
+- Call stack with source lines, evaluate/hover, Debug Console gdb commands, disassembly, and read/write memory.
+- Restart and clean shutdown (gdbserver exits with the session).
+- Added a `NASM IDE: make` task and launch defaults that read `APP`/`BUILD_DIR`/`TARGET` from a workspace Makefile. Debugging uses the unstripped ELF (`build/deforest`, not `-stripped`).
+
 # 0.2.7
 
 - Reverted "don't complete a finished token": VS Code's own word suggestions keep the widget open anyway, so hiding our items just removed useful candidates. Enter behavior is controlled by `editor.acceptSuggestionOnEnter` / `editor.wordBasedSuggestions` (scoped `[nasm]` settings work).

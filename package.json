@@ -1,8 +1,8 @@
 {
     "name": "nasm-ide",
     "displayName": "NASM IDE",
-    "description": "Language Server Protocol-based IntelliSense, hover docs, cross-file extern support, library-aware diagnostics, and build tasks for NASM-style x86/x86_64 assembly.",
-    "version": "0.2.7",
+    "description": "Language Server Protocol-based IntelliSense, hover docs, cross-file extern support, library-aware diagnostics, build tasks, and a gdb debugger for NASM-style x86/x86_64 assembly.",
+    "version": "0.3.0",
     "publisher": "lemion",
     "author": {
         "name": "lemion"
@@ -23,16 +23,22 @@
         "nasm",
         "intel",
         "asm",
-        "linker"
+        "linker",
+        "debugger",
+        "gdb"
     ],
     "engines": {
         "vscode": "^1.85.0"
     },
     "categories": [
-        "Programming Languages"
+        "Programming Languages",
+        "Debuggers"
     ],
     "activationEvents": [
-        "onLanguage:nasm"
+        "onLanguage:nasm",
+        "onDebug",
+        "onDebugInitialConfigurations",
+        "onDebugResolve:nasm"
     ],
     "main": "./out/extension.js",
     "contributes": {
@@ -57,6 +63,170 @@
                 "language": "nasm",
                 "scopeName": "source.nasm",
                 "path": "./syntaxes/nasm.tmLanguage.json"
+            }
+        ],
+        "debuggers": [
+            {
+                "type": "nasm",
+                "label": "NASM (gdb)",
+                "languages": [
+                    "nasm"
+                ],
+                "program": "./out/debugAdapter.js",
+                "runtime": "node",
+                "configurationAttributes": {
+                    "launch": {
+                        "required": [
+                            "program"
+                        ],
+                        "properties": {
+                            "program": {
+                                "type": "string",
+                                "description": "Path to the unstripped ELF executable to debug."
+                            },
+                            "args": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                },
+                                "default": [],
+                                "description": "Command-line arguments passed to the program."
+                            },
+                            "cwd": {
+                                "type": "string",
+                                "default": "${workspaceFolder}",
+                                "description": "Working directory for the program and gdb."
+                            },
+                            "console": {
+                                "type": "string",
+                                "enum": [
+                                    "internalConsole",
+                                    "integratedTerminal",
+                                    "externalTerminal"
+                                ],
+                                "default": "integratedTerminal",
+                                "description": "Where the program runs. Use integratedTerminal for ncurses, X11, or programs that need a TTY; internalConsole runs with pipe-based stdin/stdout."
+                            },
+                            "stopOnEntry": {
+                                "type": "boolean",
+                                "default": false,
+                                "description": "Stop at the program entry point."
+                            },
+                            "env": {
+                                "type": "object",
+                                "additionalProperties": {
+                                    "type": [
+                                        "string",
+                                        "null"
+                                    ]
+                                },
+                                "description": "Environment variables for the program."
+                            },
+                            "gdbPath": {
+                                "type": "string",
+                                "default": "gdb",
+                                "description": "Path to the gdb executable."
+                            },
+                            "gdbserverPath": {
+                                "type": "string",
+                                "default": "gdbserver",
+                                "description": "Path to the gdbserver executable."
+                            }
+                        }
+                    },
+                    "attach": {
+                        "properties": {
+                            "program": {
+                                "type": "string",
+                                "description": "Optional unstripped ELF executable used for symbols."
+                            },
+                            "processId": {
+                                "type": "number",
+                                "description": "PID to attach to with gdb."
+                            },
+                            "host": {
+                                "type": "string",
+                                "default": "127.0.0.1",
+                                "description": "gdbserver host."
+                            },
+                            "port": {
+                                "type": "number",
+                                "description": "gdbserver port."
+                            },
+                            "cwd": {
+                                "type": "string",
+                                "default": "${workspaceFolder}"
+                            },
+                            "stopOnEntry": {
+                                "type": "boolean",
+                                "default": false
+                            },
+                            "gdbPath": {
+                                "type": "string",
+                                "default": "gdb"
+                            }
+                        }
+                    }
+                },
+                "initialConfigurations": [
+                    {
+                        "type": "nasm",
+                        "request": "launch",
+                        "name": "Debug NASM program",
+                        "program": "${workspaceFolder}/bin/${workspaceFolderBasename}",
+                        "cwd": "${workspaceFolder}",
+                        "console": "integratedTerminal",
+                        "stopOnEntry": true
+                    }
+                ],
+                "configurationSnippets": [
+                    {
+                        "label": "NASM: Launch program (make + gdb)",
+                        "description": "Build with make, then run the ELF under gdb in an integrated terminal.",
+                        "body": {
+                            "type": "nasm",
+                            "request": "launch",
+                            "name": "Debug NASM program (gdb)",
+                            "program": "${workspaceFolder}/build/${workspaceFolderBasename}",
+                            "cwd": "${workspaceFolder}",
+                            "console": "integratedTerminal",
+                            "stopOnEntry": true,
+                            "preLaunchTask": "NASM IDE: make"
+                        }
+                    },
+                    {
+                        "label": "NASM: Launch in Debug Console (no TTY)",
+                        "description": "Run gdb directly; program stdin/stdout are pipes. Good for headless programs and tests.",
+                        "body": {
+                            "type": "nasm",
+                            "request": "launch",
+                            "name": "Debug NASM program (console)",
+                            "program": "${workspaceFolder}/build/${workspaceFolderBasename}",
+                            "cwd": "${workspaceFolder}",
+                            "console": "internalConsole",
+                            "stopOnEntry": true,
+                            "preLaunchTask": "NASM IDE: make"
+                        }
+                    },
+                    {
+                        "label": "NASM: Attach to gdbserver",
+                        "description": "Attach to a program already running under gdbserver.",
+                        "body": {
+                            "type": "nasm",
+                            "request": "attach",
+                            "name": "Attach to gdbserver",
+                            "host": "127.0.0.1",
+                            "port": 1234,
+                            "program": "${workspaceFolder}/build/${workspaceFolderBasename}",
+                            "cwd": "${workspaceFolder}"
+                        }
+                    }
+                ]
+            }
+        ],
+        "breakpoints": [
+            {
+                "language": "nasm"
             }
         ],
         "configuration": {
@@ -206,7 +376,8 @@
                 "description": "Sixth stack push/pop pair depth (cycles after this)."
             }
         ],
-        "taskDefinitions": [            {
+        "taskDefinitions": [
+            {
                 "type": "nasm-ide",
                 "required": [
                     "operation"
@@ -217,9 +388,10 @@
                         "enum": [
                             "build",
                             "run",
-                            "clean"
+                            "clean",
+                            "make"
                         ],
-                        "description": "The nasm-ide task operation."
+                        "description": "The nasm-ide task operation. 'make' runs the workspace Makefile."
                     }
                 }
             }
@@ -239,6 +411,8 @@
         "typescript": "^5.6.0"
     },
     "dependencies": {
+        "@vscode/debugadapter": "^1.68.0",
+        "@vscode/debugprotocol": "^1.68.0",
         "vscode-languageclient": "^9.0.0"
     }
 }

@@ -36,6 +36,9 @@ substantially extended here. License: MIT, see `LICENSE.md`.
 - As-you-type (debounced) or on-save diagnostics.
 - `NASM IDE: Pick Link Libraries` - fuzzy-search every linkable `-l` flag
   on your system, saved to the workspace.
+- gdb debugger: source/instruction breakpoints, registers, flags, stack,
+  call stack, disassembly, memory, restart. Launch in a terminal for ncurses
+  and X11, or in the Debug Console for headless programs (see below).
 
 ## Library documentation
 
@@ -137,7 +140,42 @@ per-workspace with `nasmIde.diagnostics.stackCheck: false`.
 
 - `NASM IDE: Restart Language Server` · `Show Server Status` ·
   `Toggle Diagnostics` · `Pick Link Libraries`
-- Tasks: `NASM IDE: build` (default build, `Ctrl+Shift+B`), `run`, `clean`.
+- Tasks: `NASM IDE: build` (default build, `Ctrl+Shift+B`), `run`, `clean`,
+  and `make` (runs the workspace `Makefile`; also the default pre-launch task
+  when a Makefile exists).
+
+## Debugging
+The debugger is contributed as `nasm` and needs `gdb` (and `gdbserver` for
+terminal launches). Pick **Run and Debug → create a launch.json file → NASM
+(gdb)** or add a configuration by hand:
+
+```jsonc
+{
+    "type": "nasm",
+    "request": "launch",
+    "name": "Debug NASM program",
+    "program": "${workspaceFolder}/build/deforest", // unstripped ELF
+    "cwd": "${workspaceFolder}",
+    "console": "integratedTerminal", // ncurses/X11/interactive
+    "stopOnEntry": true,
+    "preLaunchTask": "NASM IDE: make"
+}
+```
+
+`console` can be `integratedTerminal` (default), `externalTerminal`, or
+`internalConsole`. Terminal modes run the program under `gdbserver`; the
+Debug Console mode runs gdb directly with piped stdin/stdout. For ncurses
+programs keep the integrated/external terminal, and debug the output that
+keeps its DWARF symbols (not a `-stripped` binary).
+
+The Debug Console accepts gdb commands such as `x/16gx $rsp` and
+`info registers`. Register, flag, and `rsp` scopes refresh on each stop.
+Breakpoints can be conditional or have a hit count. To attach to an already
+running program, use a `"request": "attach"` configuration with either
+`processId` or `host`/`port` (gdbserver).
+
+Make sure `gdbserver` is installed and on `PATH` (on Debian/Ubuntu it is in
+the `gdbserver` package). Override paths with `gdbPath` / `gdbserverPath`.
 
 ## Configuration (`nasmIde`)
 
