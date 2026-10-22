@@ -886,17 +886,43 @@ async function debuggerTests() {
         const stackRef = scopes.find((s) => s.name === "Stack (rsp)").variablesReference;
         response = await client.send("variables", { variablesReference: registersRef });
         const registers = Object.fromEntries(response.body.variables.map((v) => [v.name, v.value]));
-        ok(registers.r12 === "0x5" && registers.r13 === "0x7", "debug registers r12/r13");
-        ok(/^0x7[0-9a-f]+$/i.test(registers.rsp), "debug rsp register");
+        ok(
+            registers.r12.startsWith("0x5") &&
+                registers.r12.includes("(5)") &&
+                registers.r13.startsWith("0x7"),
+            "debug registers r12/r13"
+        );
+        ok(
+            /^0x7[0-9a-f]+\s+\(\d+\)\s+\[rsp % 16 = \d+(?:, aligned)?\]/i.test(registers.rsp),
+            "debug rsp register and alignment"
+        );
+        const rspAddress = registers.rsp.match(/^0x[0-9a-f]+/i)[0];
         response = await client.send("setVariable", {
             variablesReference: registersRef,
             name: "r13",
             value: "42",
         });
-        ok(response.success && /^(42|0x2a)$/i.test(response.body.value), "debug set register");
+        ok(
+            response.success &&
+                response.body.value.startsWith("0x2a") &&
+                response.body.value.includes("(42)") &&
+                response.body.value.includes("'*'"),
+            "debug set register"
+        );
         response = await client.send("variables", { variablesReference: registersRef });
         const changedRegisters = Object.fromEntries(response.body.variables.map((v) => [v.name, v.value]));
-        ok(changedRegisters.r13 === "0x2a", "debug set register is live");
+        ok(
+            changedRegisters.r13.startsWith("0x2a") &&
+                changedRegisters.r13.includes("(42)") &&
+                changedRegisters.r13.includes("'*'"),
+            "debug set register is live"
+        );
+        response = await client.send("setVariable", {
+            variablesReference: registersRef,
+            name: "r13",
+            value: changedRegisters.r13,
+        });
+        ok(response.success && response.body.value.includes("(42)"), "debug edit annotated register");
         response = await client.send("variables", { variablesReference: flagsRef });
         const flags = Object.fromEntries(response.body.variables.map((v) => [v.name, v.value]));
         ok(flags.RFLAGS && flags.CF !== undefined && flags.ZF !== undefined, "debug flags decoded");
@@ -978,7 +1004,7 @@ async function debuggerTests() {
             "debug disassembly at rip"
         );
         response = await client.send("readMemory", {
-            memoryReference: registers.rsp,
+            memoryReference: rspAddress,
             offset: 0,
             count: 16,
         });

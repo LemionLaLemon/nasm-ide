@@ -1,6 +1,6 @@
 {
     "name": "nasm-ide-server",
-    "version": "0.3.5",
+    "version": "0.3.6",
     "private": true,
     "description": "Language server for the NASM IDE extension.",
     "main": "./out/server.js",

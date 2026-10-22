@@ -1,3 +1,11 @@
+# 0.3.6
+
+- Register values now show unsigned decimal and printable ASCII inline
+  (`rax  0x2a  (42)  '*'`).
+- `rsp`/`esp` show `% 16` and an `aligned` marker when the remainder is zero.
+- Register editing still works with the annotated display; only the leading
+  hex value is sent to gdb.
+
 # 0.3.5
 
 - Added **NASM IDE: Configure Debugging** to create `.vscode/launch.json` and

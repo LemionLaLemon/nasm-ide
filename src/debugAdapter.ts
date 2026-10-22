@@ -183,6 +183,74 @@ function hex(n: number): string {
     return `0x${Math.trunc(n).toString(16)}`;
 }
 
+function parseRegisterValue(text: string): bigint | undefined {
+    const t = text.trim();
+    if (/^0x[0-9a-f]+$/i.test(t)) {
+        return BigInt(t);
+    }
+    const parsed = parseIntValue(t);
+    return isNaN(parsed) ? undefined : BigInt(Math.trunc(parsed));
+}
+
+function normalizeRegisterHex(text: string): string {
+    const value = parseRegisterValue(text);
+    return value === undefined ? text : `0x${value.toString(16)}`;
+}
+
+function registerAscii(value: bigint): string | undefined {
+    if (value <= 0n) {
+        return undefined;
+    }
+    const bytes: number[] = [];
+    let remaining = value;
+    while (remaining > 0n) {
+        bytes.push(Number(remaining & 0xffn));
+        remaining >>= 8n;
+    }
+    while (bytes.length > 0 && bytes[bytes.length - 1] === 0) {
+        bytes.pop();
+    }
+    if (bytes.length === 0 || !bytes.every((byte) => byte >= 0x20 && byte <= 0x7e)) {
+        return undefined;
+    }
+    const text = bytes.map((byte) => String.fromCharCode(byte)).join("");
+    const escaped = text.replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, '\\"');
+    return text.length === 1 ? `'${escaped}'` : `"${escaped}"`;
+}
+
+function formatRegisterValue(name: string, raw: string): string {
+    const lower = name.toLowerCase();
+    if (["rflags", "eflags", "cs", "ss", "ds", "es", "fs", "gs"].includes(lower)) {
+        return raw;
+    }
+    const value = parseRegisterValue(raw);
+    if (value === undefined) {
+        return raw;
+    }
+    const parts = [raw, `(${value.toString(10)})`];
+    if (!["rip", "eip", "rsp", "esp", "rbp", "ebp"].includes(lower)) {
+        const ascii = registerAscii(value);
+        if (ascii) {
+            parts.push(ascii);
+        }
+    }
+    if (lower === "rsp" || lower === "esp") {
+        const mod = Number(value % 16n);
+        parts.push(`[${lower} % 16 = ${mod}${mod === 0 ? ", aligned" : ""}]`);
+    }
+    return parts.join("  ");
+}
+
+/** VS Code edits the displayed value, so strip our read-only annotations. */
+function registerEditValue(text: string): string {
+    const trimmed = text.trim();
+    const match =
+        /^(0x[0-9a-f]+)\s{2,}\([^)]*\)(?:\s{2,}(?:'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|\[(?:r|e)sp % 16 = \d+(?:, aligned)?\]))?$/i.exec(
+            trimmed
+        );
+    return match ? match[1] : trimmed;
+}
+
 function getFreePort(): Promise<number> {
     return new Promise((resolve, reject) => {
         const server = net.createServer();
@@ -852,10 +920,11 @@ class NasmDebugSession extends DebugSession {
         });
         entries.sort((a, b) => a.order - b.order || a.seq - b.seq);
         return entries.map((entry) => {
-            const variable = new Variable(entry.name, entry.value || "0x0") as DebugProtocol.Variable;
+            const raw = entry.value || "0x0";
+            const variable = new Variable(entry.name, formatRegisterValue(entry.name, raw)) as DebugProtocol.Variable;
             variable.type = "register";
-            if (/^0x[0-9a-f]+$/i.test(entry.value) && entry.value !== "0x0") {
-                variable.memoryReference = entry.value;
+            if (/^0x[0-9a-f]+$/i.test(raw) && raw !== "0x0") {
+                variable.memoryReference = raw;
             }
             return variable;
         });
@@ -1259,14 +1328,16 @@ class NasmDebugSession extends DebugSession {
         try {
             if (scope.kind === "registers") {
                 const gdb = this.gdb as GdbMi;
+                const value = registerEditValue(args.value);
                 await gdb.send(
-                    `-interpreter-exec console ${miQuote(`set $${args.name} = ${args.value}`)}`
+                    `-interpreter-exec console ${miQuote(`set $${args.name} = ${value}`)}`
                 );
                 const rec = await gdb.send(
                     `-data-evaluate-expression ${miQuote(`$${args.name}`)}`
                 );
+                const raw = miString(rec.results.value);
                 response.body = {
-                    value: miString(rec.results.value),
+                    value: formatRegisterValue(args.name, normalizeRegisterHex(raw)),
                     type: "register",
                     variablesReference: 0,
                 };

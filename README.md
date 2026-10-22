@@ -188,9 +188,13 @@ byte view, and labels like `Window:` group their `.field` children.
 Registers and data variables are editable: double-click a value in the
 Variables view. Registers accept gdb expressions; data accepts numbers,
 comma-separated elements, quoted strings, or hex byte lists such as
-`68 69 00`. Breakpoints can be conditional or have a hit count. To attach to
-an already running program, use a `"request": "attach"` configuration with
-either `processId` or `host`/`port` (gdbserver).
+`68 69 00`. Register values also show their unsigned decimal value and, when
+the bytes form printable ASCII, the corresponding text. `rsp` (and `esp`)
+include `rsp % 16` so stack alignment is visible at a glance. The extra text is
+display-only; editing a register uses the leading hex value. Breakpoints can
+be conditional or have a hit count. To attach to an already running program,
+use a `"request": "attach"` configuration with either `processId` or
+`host`/`port` (gdbserver).
 
 Make sure `gdbserver` is installed and on `PATH` (on Debian/Ubuntu it is in
 the `gdbserver` package). Override paths with `gdbPath` / `gdbserverPath`.
