@@ -1029,6 +1029,144 @@ async function debuggerTests() {
         client.cleanup();
     }
 
+    // Multiple sources: both files have .text and their own DWARF line tables.
+    const multiDir = "/tmp/opencode/nasm-ide-multisource-test";
+    fs.rmSync(multiDir, { recursive: true, force: true });
+    fs.mkdirSync(multiDir, { recursive: true });
+    const mainSource = path.join(multiDir, "main.asm");
+    const helperSource = path.join(multiDir, "helper.asm");
+    const multiProgram = path.join(multiDir, "multi");
+    const mainLines = [
+        "default rel",
+        "global _start",
+        "extern helper",
+        "section .text",
+        "_start:",
+        "    call helper",
+        "    mov eax, 60",
+        "    xor edi, edi",
+        "    syscall",
+        "",
+    ];
+    const helperLines = [
+        "default rel",
+        "global helper",
+        "section .text",
+        "helper:",
+        "    mov r12, 3",
+        ".loop:",
+        "    dec r12",
+        "    jnz .loop",
+        "    ret",
+        "",
+    ];
+    fs.writeFileSync(mainSource, mainLines.join("\n"));
+    fs.writeFileSync(helperSource, helperLines.join("\n"));
+    execFileSync("nasm", ["-f", "elf64", "-g", "-F", "dwarf", mainSource, "-o", path.join(multiDir, "main.o")]);
+    execFileSync("nasm", ["-f", "elf64", "-g", "-F", "dwarf", helperSource, "-o", path.join(multiDir, "helper.o")]);
+    execFileSync("ld", ["-o", multiProgram, path.join(multiDir, "main.o"), path.join(multiDir, "helper.o")]);
+
+    const multiClient = new TestDapClient(adapter);
+    try {
+        let response = await multiClient.send("initialize", {
+            adapterID: "nasm",
+            linesStartAt1: true,
+            columnsStartAt1: true,
+            pathFormat: "path",
+        });
+        ok(response.success, "multi-source debug initialize");
+        response = await multiClient.send("launch", {
+            program: multiProgram,
+            cwd: multiDir,
+            console: "internalConsole",
+            stopOnEntry: false,
+            args: [],
+        });
+        ok(response.success, "multi-source debug launch");
+        await multiClient.waitForEvent((e) => e.event === "initialized");
+        response = await multiClient.send("setBreakpoints", {
+            source: { path: mainSource },
+            breakpoints: [{ line: mainLines.indexOf("    call helper") + 1 }],
+        });
+        ok(response.body.breakpoints[0].verified === true, "multi-source main breakpoint verified");
+        response = await multiClient.send("setBreakpoints", {
+            source: { path: helperSource },
+            breakpoints: [{ line: helperLines.indexOf("    dec r12") + 1 }],
+        });
+        ok(response.body.breakpoints[0].verified === true, "multi-source helper breakpoint verified");
+        await multiClient.send("configurationDone", {});
+        let stopped = await multiClient.waitForEvent((e) => e.event === "stopped");
+        ok(stopped.body.reason === "breakpoint", "multi-source stops in main");
+        response = await multiClient.send("stackTrace", { threadId: 1, startFrame: 0, levels: 2 });
+        ok(response.body.stackFrames[0].source.path === mainSource, "multi-source frame reports main.asm");
+        response = await multiClient.send("continue", { threadId: 1 });
+        ok(response.success, "multi-source continue");
+        stopped = await multiClient.waitForEvent((e) => e.event === "stopped");
+        ok(stopped.body.reason === "breakpoint", "multi-source stops in helper");
+        response = await multiClient.send("stackTrace", { threadId: 1, startFrame: 0, levels: 2 });
+        ok(response.body.stackFrames[0].source.path === helperSource, "multi-source frame reports helper.asm");
+        response = await multiClient.send("disconnect", { terminateDebuggee: true });
+        ok(response.success, "multi-source disconnect");
+    } finally {
+        multiClient.cleanup();
+    }
+    fs.rmSync(multiDir, { recursive: true, force: true });
+
+    // A source whose code is still in .rodata has no DWARF line table.
+    const noLinesDir = "/tmp/opencode/nasm-ide-no-lines-test";
+    fs.rmSync(noLinesDir, { recursive: true, force: true });
+    fs.mkdirSync(noLinesDir, { recursive: true });
+    const noLinesMain = path.join(noLinesDir, "main.asm");
+    const noLinesBad = path.join(noLinesDir, "bad.asm");
+    const noLinesProgram = path.join(noLinesDir, "nolines");
+    fs.writeFileSync(
+        noLinesMain,
+        "default rel\nglobal _start\nextern badfunc\nsection .text\n_start:\n    call badfunc\n    mov eax, 60\n    xor edi, edi\n    syscall\n"
+    );
+    const badLines = ["default rel", "global badfunc", "section .rodata", "badfunc:", "    ret", ""];
+    fs.writeFileSync(noLinesBad, badLines.join("\n"));
+    execFileSync("nasm", ["-f", "elf64", "-g", "-F", "dwarf", noLinesMain, "-o", path.join(noLinesDir, "main.o")]);
+    execFileSync("nasm", ["-f", "elf64", "-g", "-F", "dwarf", noLinesBad, "-o", path.join(noLinesDir, "bad.o")]);
+    execFileSync("ld", ["-o", noLinesProgram, path.join(noLinesDir, "main.o"), path.join(noLinesDir, "bad.o")]);
+
+    const noLinesClient = new TestDapClient(adapter);
+    try {
+        let response = await noLinesClient.send("initialize", {
+            adapterID: "nasm",
+            linesStartAt1: true,
+            columnsStartAt1: true,
+            pathFormat: "path",
+        });
+        ok(response.success, "no-line-info debug initialize");
+        response = await noLinesClient.send("launch", {
+            program: noLinesProgram,
+            cwd: noLinesDir,
+            console: "internalConsole",
+            stopOnEntry: false,
+            args: [],
+        });
+        ok(response.success, "no-line-info debug launch");
+        await noLinesClient.waitForEvent((e) => e.event === "initialized");
+        response = await noLinesClient.send("setBreakpoints", {
+            source: { path: noLinesBad },
+            breakpoints: [{ line: badLines.indexOf("    ret") + 1 }],
+        });
+        ok(response.body.breakpoints[0].verified === false, "no-line-info breakpoint is unverified");
+        ok(
+            (response.body.breakpoints[0].message || "").includes("section .text"),
+            "no-line-info breakpoint explains section .text"
+        );
+        const hint = await noLinesClient.waitForEvent(
+            (e) => e.event === "output" && (e.body.output || "").includes("section .text")
+        );
+        ok(hint, "no-line-info warning points at section .text");
+        response = await noLinesClient.send("disconnect", { terminateDebuggee: true });
+        ok(response.success, "no-line-info disconnect");
+    } finally {
+        noLinesClient.cleanup();
+    }
+    fs.rmSync(noLinesDir, { recursive: true, force: true });
+
     // Terminal/gdbserver path: the fake client starts gdbserver for runInTerminal.
     const terminalClient = new TestDapClient(adapter);
     try {

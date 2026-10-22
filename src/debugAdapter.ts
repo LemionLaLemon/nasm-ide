@@ -286,6 +286,8 @@ class NasmDebugSession extends DebugSession {
     private sourceBreakpoints = new Map<string, BreakpointSpec[]>();
     private functionBreakpoints: FunctionBpSpec[] = [];
     private instructionBreakpoints: InstructionBpSpec[] = [];
+    private sourceFiles: Set<string> | null = null;
+    private warnedMissingLineInfo = new Set<string>();
 
     protected initializeRequest(
         response: DebugProtocol.InitializeResponse,
@@ -367,6 +369,8 @@ class NasmDebugSession extends DebugSession {
             ? args.program
             : path.resolve(this.cwd, args.program);
         this.dataSymbols = null;
+        this.sourceFiles = null;
+        this.warnedMissingLineInfo.clear();
         if (!fs.existsSync(this.program)) {
             throw new Error(`program not found: ${this.program} (build it first)`);
         }
@@ -422,6 +426,8 @@ class NasmDebugSession extends DebugSession {
                 : path.resolve(this.cwd, args.program)
             : "";
         this.dataSymbols = null;
+        this.sourceFiles = null;
+        this.warnedMissingLineInfo.clear();
         this.stopOnEntry = !!args.stopOnEntry;
 
         const gdbPath = args.gdbPath || args.miDebuggerPath || "gdb";
@@ -621,14 +627,25 @@ class NasmDebugSession extends DebugSession {
                 spec.gdbId = number;
                 bp.setId(number);
             }
-            const pending = miString(bkpt.pending) === "1" || !miString(bkpt.addr);
-            bp.verified = !pending;
+            const pending = miString(bkpt.pending);
+            const addr = miString(bkpt.addr);
+            const isPending = !!pending || !addr || addr === "<PENDING>";
+            bp.verified = !isPending;
             const actualLine = miNumber(bkpt.line);
             if (!isNaN(actualLine) && actualLine > 0) {
                 bp.line = actualLine;
             }
             if (!bp.verified) {
-                bp.message = "pending until the code is loaded";
+                const hasLineInfo = await this.sourceHasLineInfo(sourcePath);
+                if (!fs.existsSync(sourcePath)) {
+                    bp.message = `source file not found: ${sourcePath}`;
+                } else if (hasLineInfo === false) {
+                    bp.message =
+                        "no debug line info for this file; if it contains code, put it in `section .text` and rebuild with -g -F dwarf";
+                    this.warnMissingLineInfo(sourcePath);
+                } else {
+                    bp.message = "pending until the code is loaded";
+                }
             }
             if (spec.condition && !isNaN(number)) {
                 await gdb.send(`-break-condition ${number} ${miQuote(spec.condition)}`);
@@ -641,6 +658,46 @@ class NasmDebugSession extends DebugSession {
             bp.message = errorMessage(err);
         }
         return bp;
+    }
+
+    /**
+     * GDB's source-file list only contains files with debug line information.
+     * A NASM file whose code is still in `.rodata`/`.data` is absent here, which
+     * is the usual reason a source breakpoint stays pending forever.
+     */
+    private async sourceHasLineInfo(sourcePath: string): Promise<boolean | undefined> {
+        try {
+            if (!this.sourceFiles) {
+                const rec = await (this.gdb as GdbMi).send("-file-list-exec-source-files");
+                const files = new Set<string>();
+                for (const entry of asArray(rec.results.files)) {
+                    const tuple = asTuple(entry);
+                    const name = miString(tuple.fullname) || miString(tuple.file);
+                    if (name) {
+                        files.add(path.resolve(this.cwd, name));
+                    }
+                }
+                this.sourceFiles = files;
+            }
+            return this.sourceFiles.has(path.resolve(sourcePath));
+        } catch {
+            return undefined;
+        }
+    }
+
+    private warnMissingLineInfo(sourcePath: string): void {
+        if (this.warnedMissingLineInfo.has(sourcePath)) {
+            return;
+        }
+        this.warnedMissingLineInfo.add(sourcePath);
+        this.sendEvent(
+            new OutputEvent(
+                `NASM IDE: ${sourcePath} has no debug line information. ` +
+                    "If this file contains code, add `section .text` before it and rebuild " +
+                    "with -g -F dwarf. NASM only emits line tables for executable sections.\n",
+                "console"
+            )
+        );
     }
 
     protected async setFunctionBreakPointsRequest(
@@ -666,7 +723,9 @@ class NasmDebugSession extends DebugSession {
                     spec.gdbId = number;
                     bp.setId(number);
                 }
-                bp.verified = !!miString(bkpt.addr) || miString(bkpt.pending) !== "1";
+                const pending = miString(bkpt.pending);
+                const addr = miString(bkpt.addr);
+                bp.verified = !!addr && addr !== "<PENDING>" && !pending;
                 const line = miNumber(bkpt.line);
                 if (!isNaN(line) && line > 0) {
                     bp.line = line;
@@ -709,7 +768,9 @@ class NasmDebugSession extends DebugSession {
                     spec.gdbId = number;
                     bp.setId(number);
                 }
-                bp.verified = !!miString(bkpt.addr);
+                const pending = miString(bkpt.pending);
+                const addr = miString(bkpt.addr);
+                bp.verified = !!addr && addr !== "<PENDING>" && !pending;
             } catch (err) {
                 bp.verified = false;
                 bp.message = errorMessage(err);

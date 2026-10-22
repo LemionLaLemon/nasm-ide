@@ -199,6 +199,14 @@ use a `"request": "attach"` configuration with either `processId` or
 Make sure `gdbserver` is installed and on `PATH` (on Debian/Ubuntu it is in
 the `gdbserver` package). Override paths with `gdbPath` / `gdbserverPath`.
 
+If a source breakpoint stays unverified and the Debug Console says
+`No source file named ...`, that file has no DWARF line table. NASM only emits
+line information for executable sections: code that follows a
+`section .rodata`/`.data`/`.bss` directive stays in that data section unless you
+switch back. Add `section .text` before the code and rebuild with
+`-g -F dwarf`. Multiple sources each with their own `.text` section work
+normally.
+
 ## Configuration (`nasmIde`)
 
 | Key | Default | What |

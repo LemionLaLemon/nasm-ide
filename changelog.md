@@ -1,3 +1,14 @@
+# 0.3.7
+
+- Fixed pending gdb breakpoints being reported as verified. GDB marks them
+  with `addr="<PENDING>"`, so source, function, and instruction breakpoints
+  now correctly show as unverified until they resolve.
+- When a source breakpoint has no debug line table, the breakpoint message and
+  Debug Console now explain that code must be in `section .text` for NASM to
+  emit DWARF line information.
+- Added an integration test that debugs a two-source program and verifies
+  breakpoints in both files.
+
 # 0.3.6
 
 - Register values now show unsigned decimal and printable ASCII inline
