@@ -173,9 +173,12 @@ The Debug Console accepts gdb commands such as `x/16gx $rsp` and
 each stop. The Data scope reads variable sizes from your NASM declarations, so
 strings and `resb`/`resd` buffers get sensible values; arrays expand into a
 byte view, and labels like `Window:` group their `.field` children.
-Breakpoints can be conditional or have a hit count. To attach to an already
-running program, use a `"request": "attach"` configuration with either
-`processId` or `host`/`port` (gdbserver).
+Registers and data variables are editable: double-click a value in the
+Variables view. Registers accept gdb expressions; data accepts numbers,
+comma-separated elements, quoted strings, or hex byte lists such as
+`68 69 00`. Breakpoints can be conditional or have a hit count. To attach to
+an already running program, use a `"request": "attach"` configuration with
+either `processId` or `host`/`port` (gdbserver).
 
 Make sure `gdbserver` is installed and on `PATH` (on Debian/Ubuntu it is in
 the `gdbserver` package). Override paths with `gdbPath` / `gdbserverPath`.

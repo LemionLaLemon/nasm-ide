@@ -13,6 +13,8 @@ import {
     ExitedEvent,
     Handles,
     InitializedEvent,
+    InvalidatedEvent,
+    MemoryEvent,
     OutputEvent,
     Scope,
     Source,
@@ -235,6 +237,16 @@ class NasmDebugSession extends DebugSession {
         response.body.supportsReadMemoryRequest = true;
         response.body.supportsWriteMemoryRequest = true;
         response.body.supportsSteppingGranularity = true;
+        // These fields are understood by current VS Code but are missing from
+        // the older @vscode/debugprotocol typings used by this extension.
+        (response.body as DebugProtocol.Capabilities & {
+            supportsInvalidatedEvent?: boolean;
+            supportsMemoryEvent?: boolean;
+        }).supportsInvalidatedEvent = true;
+        (response.body as DebugProtocol.Capabilities & {
+            supportsInvalidatedEvent?: boolean;
+            supportsMemoryEvent?: boolean;
+        }).supportsMemoryEvent = true;
         response.body.supportTerminateDebuggee = true;
         response.body.exceptionBreakpointFilters = [
             { filter: "SIGSEGV", label: "Segmentation fault", default: false },
@@ -1240,27 +1252,200 @@ class NasmDebugSession extends DebugSession {
         args: DebugProtocol.SetVariableArguments
     ): Promise<void> {
         const scope = this.handles.get(args.variablesReference);
-        if (!scope || scope.kind !== "registers") {
-            this.sendErrorResponse(response, 2006, "only registers can be modified");
+        if (!scope) {
+            this.sendErrorResponse(response, 2006, "unknown variable container");
             return;
         }
         try {
-            const gdb = this.gdb as GdbMi;
-            await gdb.send(
-                `-interpreter-exec console ${miQuote(`set $${args.name} = ${args.value}`)}`
-            );
-            const rec = await gdb.send(
-                `-data-evaluate-expression ${miQuote(`$${args.name}`)}`
-            );
-            response.body = {
-                value: miString(rec.results.value),
-                type: "register",
-                variablesReference: 0,
-            };
+            if (scope.kind === "registers") {
+                const gdb = this.gdb as GdbMi;
+                await gdb.send(
+                    `-interpreter-exec console ${miQuote(`set $${args.name} = ${args.value}`)}`
+                );
+                const rec = await gdb.send(
+                    `-data-evaluate-expression ${miQuote(`$${args.name}`)}`
+                );
+                response.body = {
+                    value: miString(rec.results.value),
+                    type: "register",
+                    variablesReference: 0,
+                };
+            } else if (scope.kind === "data") {
+                const symbol = await this.findTopLevelDataSymbol(args.name);
+                if (!symbol) {
+                    throw new Error(`unknown data variable: ${args.name}`);
+                }
+                response.body = await this.writeDataSymbol(symbol, args.value);
+            } else if (scope.kind === "dataGroup") {
+                const symbol = scope.children.find(
+                    (child) => child.displayName === args.name || child.name === args.name
+                );
+                if (!symbol) {
+                    throw new Error(`unknown data field: ${args.name}`);
+                }
+                response.body = await this.writeDataSymbol(symbol, args.value);
+            } else if (scope.kind === "dataBytes") {
+                response.body = await this.writeDataBytes(scope, args.name, args.value);
+            } else {
+                throw new Error("this scope is read-only");
+            }
+            this.sendEvent(new InvalidatedEvent(["variables"], this.threadId));
             this.sendResponse(response);
         } catch (err) {
             this.sendErrorResponse(response, 2007, errorMessage(err));
         }
+    }
+
+    private async findTopLevelDataSymbol(name: string): Promise<DataSymbol | undefined> {
+        const symbols = await this.resolveDataSymbols();
+        const names = new Set(symbols.map((symbol) => symbol.name));
+        const parentOf = (value: string): string => {
+            const dot = value.lastIndexOf(".");
+            return dot > 0 ? value.slice(0, dot) : "";
+        };
+        return symbols.find((symbol) => {
+            const parent = parentOf(symbol.name);
+            const topLevel = !parent || !names.has(parent);
+            return topLevel && (symbol.displayName === name || symbol.name === name);
+        });
+    }
+
+    private async writeDataSymbol(
+        symbol: DataSymbol,
+        value: string
+    ): Promise<DebugProtocol.SetVariableResponse["body"]> {
+        const address = symbol.address;
+        if (address === undefined) {
+            throw new Error(`${symbol.name} has no address`);
+        }
+        if (symbol.aggregate) {
+            throw new Error("expand this group and edit one of its fields");
+        }
+        const size = this.dataSize(symbol, []);
+        if (size <= 0) {
+            throw new Error(`${symbol.name} has no writable storage`);
+        }
+        const element = DATA_ELEMENT_SIZES[symbol.type] || 1;
+        const bytes = this.parseDataValue(value, size, element, symbol.type);
+        await (this.gdb as GdbMi).send(
+            `-data-write-memory-bytes ${hex(address)} ${bytes.toString("hex")}`
+        );
+        this.sendEvent(new MemoryEvent(hex(address), 0, bytes.length));
+        const updated = await this.readDataBytes(address, Math.min(size, 4096));
+        const count = element > 0 ? Math.floor(size / element) : 0;
+        return {
+            value: this.formatDataValue(symbol, updated),
+            type: size > element || count > 1
+                ? `${symbol.type}[${count}] @ ${hex(address)}`
+                : `${symbol.type} @ ${hex(address)}`,
+            variablesReference: size > element
+                ? this.handles.create({ kind: "dataBytes", address, size })
+                : 0,
+        };
+    }
+
+    private async writeDataBytes(
+        ref: { kind: "dataBytes"; address: number; size: number },
+        name: string,
+        value: string
+    ): Promise<DebugProtocol.SetVariableResponse["body"]> {
+        const match = /^\+0x([0-9a-f]+)$/i.exec(name);
+        if (!match) {
+            throw new Error(`unknown data row: ${name}`);
+        }
+        const offset = parseInt(match[1], 16);
+        const rowSize = Math.min(16, Math.max(0, ref.size - offset));
+        if (rowSize <= 0) {
+            throw new Error(`data row is out of range: ${name}`);
+        }
+        const bytes = this.parseDataValue(value, rowSize, 1, "db");
+        const address = ref.address + offset;
+        await (this.gdb as GdbMi).send(
+            `-data-write-memory-bytes ${hex(address)} ${bytes.toString("hex")}`
+        );
+        this.sendEvent(new MemoryEvent(hex(address), 0, bytes.length));
+        const updated = await this.readDataBytes(address, bytes.length);
+        const hexText = Array.from(updated, (byte) => byte.toString(16).padStart(2, "0")).join(" ");
+        const asciiText = Array.from(updated, (byte) =>
+            byte >= 0x20 && byte <= 0x7e ? String.fromCharCode(byte) : "."
+        ).join("");
+        return {
+            value: `${hexText.padEnd(47)}  ${asciiText}`,
+            type: `${updated.length} bytes`,
+            variablesReference: 0,
+        };
+    }
+
+    /** Convert a user-entered value into bytes to write into a data variable. */
+    private parseDataValue(value: string, size: number, element: number, type: string): Buffer {
+        const text = value.trim();
+        if (!text) {
+            throw new Error("empty value");
+        }
+        const byteArray = type === "db" || type.startsWith("resb");
+        if (
+            (text.startsWith('"') && text.endsWith('"')) ||
+            (text.startsWith("'") && text.endsWith("'")) ||
+            (text.startsWith("`") && text.endsWith("`"))
+        ) {
+            if (!byteArray) {
+                throw new Error("quoted strings can only be written to byte data");
+            }
+            const bytes = decodeUserString(text);
+            if (bytes.length > size) {
+                throw new Error(`string is ${bytes.length} bytes, but ${size} bytes are available`);
+            }
+            // Editing a fixed-size buffer replaces the whole buffer.
+            return Buffer.concat([bytes, Buffer.alloc(size - bytes.length)]);
+        }
+        // A whitespace/comma separated byte list, e.g. `68 69 00`, or a single
+        // hex string such as `686900` / `0x686900`.
+        if (byteArray) {
+            const tokens = text.split(/[\s,]+/).filter(Boolean);
+            const singleHex = /^0x([0-9a-f]+)$/i.exec(text) || /^([0-9a-f]+)$/i.exec(text);
+            if (tokens.length > 1 || (singleHex && singleHex[1].length > 2)) {
+                const parts = tokens.length > 1
+                    ? tokens.map((token) => token.replace(/^0x/i, ""))
+                    : [singleHex ? singleHex[1] : text];
+                const bytes: number[] = [];
+                for (const part of parts) {
+                    if (part.length > 2) {
+                        if (part.length % 2 !== 0 || !/^[0-9a-f]+$/i.test(part)) {
+                            throw new Error(`invalid hex bytes: ${text}`);
+                        }
+                        for (let i = 0; i < part.length; i += 2) {
+                            bytes.push(parseInt(part.slice(i, i + 2), 16));
+                        }
+                    } else {
+                        if (!/^[0-9a-f]{1,2}$/i.test(part)) {
+                            throw new Error(`invalid byte: ${part}`);
+                        }
+                        bytes.push(parseInt(part, 16));
+                    }
+                }
+                if (bytes.length > size) {
+                    throw new Error(`${bytes.length} bytes do not fit in ${size} bytes`);
+                }
+                return Buffer.from(bytes);
+            }
+        }
+        if (element > 1 && text.includes(",")) {
+            const parts = text.split(",").map((part) => part.trim()).filter(Boolean);
+            const bytes: Buffer[] = [];
+            for (const part of parts) {
+                const number = parseUserNumber(part);
+                if (number === undefined) {
+                    throw new Error(`invalid value: ${part}`);
+                }
+                bytes.push(encodeLittleEndian(number, element));
+            }
+            return Buffer.concat(bytes);
+        }
+        const number = parseUserNumber(text);
+        if (number === undefined) {
+            throw new Error(`invalid value: ${text}`);
+        }
+        return encodeLittleEndian(number, element);
     }
 
     protected async evaluateRequest(
@@ -1672,6 +1857,80 @@ function readBufferLittleEndian(bytes: Buffer, width: number): number {
         value |= BigInt(bytes[i]) << BigInt(i * 8);
     }
     return Number(value & 0xffffffffffffffffn);
+}
+
+function decodeUserString(text: string): Buffer {
+    const body = text.slice(1, -1);
+    const bytes: number[] = [];
+    for (let i = 0; i < body.length; i++) {
+        const ch = body[i];
+        if (ch !== "\\" || i + 1 >= body.length) {
+            bytes.push(...Buffer.from(ch, "utf8"));
+            continue;
+        }
+        const next = body[++i];
+        const simple: Record<string, string> = {
+            n: "\n",
+            r: "\r",
+            t: "\t",
+            v: "\v",
+            f: "\f",
+            a: "\x07",
+            e: "\x1b",
+            "0": "\0",
+            "\\": "\\",
+            "'": "'",
+            '"': '"',
+            "`": "`",
+        };
+        if (simple[next] !== undefined) {
+            bytes.push(...Buffer.from(simple[next], "utf8"));
+        } else if (next === "x" && i + 2 < body.length) {
+            const hex = body.slice(i + 1, i + 3);
+            if (/^[0-9a-f]{2}$/i.test(hex)) {
+                bytes.push(parseInt(hex, 16));
+                i += 2;
+            } else {
+                bytes.push(next.charCodeAt(0));
+            }
+        } else {
+            bytes.push(next.charCodeAt(0));
+        }
+    }
+    return Buffer.from(bytes);
+}
+
+function parseUserNumber(text: string): number | undefined {
+    const value = text.trim();
+    if (/^'.'$/.test(value) || /^"."$/.test(value)) {
+        return value.charCodeAt(1);
+    }
+    if (/^[-+]?0x[0-9a-f]+$/i.test(value)) {
+        return parseInt(value.replace(/^([-+]?)0x/i, "$1"), 16);
+    }
+    if (/^[-+]?0b[01]+$/i.test(value)) {
+        return parseInt(value.replace(/^([-+]?)0b/i, "$1"), 2);
+    }
+    if (/^[-+]?0o[0-7]+$/i.test(value)) {
+        return parseInt(value.replace(/^([-+]?)0o/i, "$1"), 8);
+    }
+    if (/^[-+]?\d+$/.test(value)) {
+        return parseInt(value, 10);
+    }
+    return undefined;
+}
+
+function encodeLittleEndian(value: number, width: number): Buffer {
+    let remaining = BigInt(Math.trunc(value));
+    if (remaining < 0n) {
+        remaining = (1n << BigInt(width * 8)) + remaining;
+    }
+    const bytes = Buffer.alloc(width);
+    for (let i = 0; i < width; i++) {
+        bytes[i] = Number(remaining & 0xffn);
+        remaining >>= 8n;
+    }
+    return bytes;
 }
 
 DebugSession.run(NasmDebugSession);

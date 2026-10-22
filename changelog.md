@@ -1,3 +1,9 @@
+# 0.3.4
+
+- Variables can now be edited from the Variables view. Double-click a register, a `.data`/`.bss` scalar, an expanded byte row, or a struct field and enter a new value. Registers accept gdb expressions; data accepts numbers, comma-separated elements, quoted strings, or hex byte lists such as `68 69 00`.
+- Register and data edits refresh the affected Variables and Memory views immediately.
+- Added tests for register editing, scalar/string/buffer writes, struct-field writes, and byte-row writes.
+
 # 0.3.3
 
 - Added a `Data (.data/.bss)` scope to the debugger. Global data labels are shown with their address, type, and current value. Arrays and strings expand into a byte view, and labels such as `Window:` group their local fields (`.rows`, `.cols`, ...).

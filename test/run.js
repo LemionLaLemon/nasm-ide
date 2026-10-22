@@ -888,6 +888,15 @@ async function debuggerTests() {
         const registers = Object.fromEntries(response.body.variables.map((v) => [v.name, v.value]));
         ok(registers.r12 === "0x5" && registers.r13 === "0x7", "debug registers r12/r13");
         ok(/^0x7[0-9a-f]+$/i.test(registers.rsp), "debug rsp register");
+        response = await client.send("setVariable", {
+            variablesReference: registersRef,
+            name: "r13",
+            value: "42",
+        });
+        ok(response.success && /^(42|0x2a)$/i.test(response.body.value), "debug set register");
+        response = await client.send("variables", { variablesReference: registersRef });
+        const changedRegisters = Object.fromEntries(response.body.variables.map((v) => [v.name, v.value]));
+        ok(changedRegisters.r13 === "0x2a", "debug set register is live");
         response = await client.send("variables", { variablesReference: flagsRef });
         const flags = Object.fromEntries(response.body.variables.map((v) => [v.name, v.value]));
         ok(flags.RFLAGS && flags.CF !== undefined && flags.ZF !== undefined, "debug flags decoded");
@@ -917,6 +926,43 @@ async function debuggerTests() {
             response.body.variables.map((v) => v.name).join(",") === ".a,.b",
             "debug data struct fields"
         );
+
+        response = await client.send("setVariable", {
+            variablesReference: dataRef,
+            name: "TestValue",
+            value: "0x5678",
+        });
+        ok(response.success && response.body.value.includes("0x5678"), "debug set .data scalar");
+        response = await client.send("setVariable", {
+            variablesReference: dataRef,
+            name: "TestString",
+            value: '"bye"',
+        });
+        ok(response.success && response.body.value.includes("bye"), "debug set .data string");
+        response = await client.send("setVariable", {
+            variablesReference: dataRef,
+            name: "TestBuf",
+            value: "de ad be ef",
+        });
+        ok(response.success && response.body.value.includes("0xde"), "debug set .bss bytes");
+        response = await client.send("setVariable", {
+            variablesReference: groupVariable.variablesReference,
+            name: ".a",
+            value: "0x1234",
+        });
+        ok(response.success && response.body.value.includes("0x1234"), "debug set struct field");
+        response = await client.send("variables", { variablesReference: stringVariable.variablesReference });
+        const stringRow = response.body.variables.find((v) => v.name === "+0x0000");
+        response = await client.send("setVariable", {
+            variablesReference: stringVariable.variablesReference,
+            name: "+0x0000",
+            value: "62 79 65",
+        });
+        ok(response.success && response.body.value.includes("62 79 65"), "debug set data byte row");
+        response = await client.send("variables", { variablesReference: dataRef });
+        const updatedData = Object.fromEntries(response.body.variables.map((v) => [v.name, v.value]));
+        ok(updatedData.TestValue.includes("0x5678"), "debug set .data is live");
+        ok(updatedData.TestString.includes("bye") && stringRow, "debug byte row is live");
 
         response = await client.send("evaluate", { expression: "$r12", context: "watch" });
         ok(response.body.result === "5", "debug evaluate register");
