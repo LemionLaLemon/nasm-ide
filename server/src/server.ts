@@ -30,7 +30,18 @@ import {
     getRegister,
     getRegisterCompletions,
 } from "./nasmData";
-import { DocumentModel, StrucDef, StrucMember, SymbolKind, parseDocument, renderSymbolDoc, strucSizeBrief } from "./parser";
+import {
+    DocumentModel,
+    StrucDef,
+    StrucMember,
+    SymbolKind,
+    findSymbolInScope,
+    localScopeAt,
+    parseDocument,
+    renderSymbolDoc,
+    strucSizeBrief,
+    symbolsForCompletion,
+} from "./parser";
 import { getLibcCompletions, getLibcFunction, renderLibcFunction } from "./libcData";
 import { LibraryIndex } from "./libraries";
 import { listLibraryCandidates } from "./libscan";
@@ -333,7 +344,9 @@ connection.onCompletion((params): CompletionItem[] => {
     const offset = document.offsetAt(position);
     const text = document.getText();
     const wordRange = getWordRangeAt(text, offset);
-    const prefix = wordRange ? text.slice(wordRange.start, wordRange.end) : "";
+    // Match against what precedes the caret, but replace the whole word when
+    // the user accepts (so accepting mid-word doesn't leave a tail behind).
+    const prefix = wordRange ? text.slice(wordRange.start, offset) : "";
     const lowerPrefix = prefix.toLowerCase();
     const items: CompletionItem[] = [];
     // Explicit replacement range: the client's word pattern stops at `.`
@@ -374,7 +387,7 @@ connection.onCompletion((params): CompletionItem[] => {
     }
     const model = documentModels.get(document.uri);
     if (model) {
-        for (const sym of model.symbols) {
+        for (const sym of symbolsForCompletion(model, position.line)) {
             if (!lowerPrefix || sym.name.toLowerCase().startsWith(lowerPrefix)) {
                 items.push({
                     label: sym.name,
@@ -490,7 +503,7 @@ connection.onCompletion((params): CompletionItem[] => {
                     });
                 }
             }
-            return items;
+            return suppressExactMatch(items, lowerPrefix);
         }
     } else if (!lowerPrefix.includes(".")) {
         // Bare struct names complete as types.
@@ -563,7 +576,7 @@ connection.onCompletion((params): CompletionItem[] => {
             }
         }
     }
-    return items;
+    return suppressExactMatch(items, lowerPrefix);
 });
 
 connection.onHover((params): Hover | null => {
@@ -622,10 +635,17 @@ connection.onHover((params): Hover | null => {
     }
     const model = documentModels.get(document.uri);
     if (model) {
-        const sym = model.symbols.find((s) => s.name.toLowerCase() === lower);
+        const sym = findSymbolInScope(model, word, position.line);
         if (sym) {
+            let value = renderSymbolDoc(sym);
+            if (sym.name.startsWith(".")) {
+                const scope = localScopeAt(model, position.line);
+                if (scope) {
+                    value += `\n\nLocal label under \`${scope.owner.name}\` (line ${sym.line + 1}).`;
+                }
+            }
             return {
-                contents: { kind: MarkupKind.Markdown, value: renderSymbolDoc(sym) },
+                contents: { kind: MarkupKind.Markdown, value },
                 range: toRange(document, wordRange.start, wordRange.end),
             };
         }
@@ -731,7 +751,7 @@ connection.onDefinition((params): Definition | null => {
     if (!model) {
         return null;
     }
-    const symbol = model.symbols.find((s) => s.name.toLowerCase() === lower);
+    const symbol = findSymbolInScope(model, word, position.line);
     if (!symbol) {
         const wsEntries = workspaceIndex.get(lower);
         if (wsEntries && wsEntries.length > 0) {
@@ -786,11 +806,21 @@ connection.onDefinition((params): Definition | null => {
     return location;
 });
 
+/** If the typed token already is a complete candidate, return nothing. This
+ *  keeps the suggestion widget from staying open (and eating Enter) after a
+ *  finished operand such as `mov r12, r13`. */
+function suppressExactMatch(items: CompletionItem[], lowerPrefix: string): CompletionItem[] {
+    if (!lowerPrefix) {
+        return items;
+    }
+    return items.some((item) => item.label.toLowerCase() === lowerPrefix) ? [] : items;
+}
+
 function getWordRangeAt(text: string, offset: number): { start: number; end: number } | null {
     if (offset < 0 || offset > text.length) {
         return null;
     }
-    const isWordChar = (ch: string): boolean => /[A-Za-z0-9_.$%]/.test(ch);
+    const isWordChar = (ch: string): boolean => /[A-Za-z0-9_.$%?@~#]/.test(ch) || ch.charCodeAt(0) > 0x7f;
     let start = offset;
     let end = offset;
     while (start > 0 && isWordChar(text.charAt(start - 1))) {

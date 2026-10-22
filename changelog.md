@@ -1,3 +1,10 @@
+# 0.2.6
+
+- Completion no longer opens (or eats Enter) for a token that is already complete. Finishing `mov r12, r13` leaves the cursor alone until you press Enter once.
+- Local labels are scope-aware: completion, hover, and F12 use the `.label` belonging to the enclosing non-local label instead of the first duplicate in the file. Hover notes the owner (e.g. "Local label under `addChoice`").
+- Labels may contain non-ASCII bytes, so emoji labels such as `.height👍` parse, complete, and jump to definition.
+- Completion matching uses the text before the caret while still replacing the whole qualified word.
+
 # 0.2.5
 
 - Library scanning now resolves GNU ld scripts (`INPUT(-lncursesw)` in `/usr/lib/libncurses.so`), so ncurses externs like `initscr`, `curs_set`, and `stdscr` no longer report as unresolved.

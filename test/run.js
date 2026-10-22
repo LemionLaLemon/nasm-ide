@@ -109,6 +109,22 @@ function unit() {
     ok(!byName("mov") && !byName("global") && !byName("section"), "instructions/directives not symbols");
     ok(P.renderSymbolDoc(byName("screen_num")).includes("4 bytes"), "data hover renders size");
 
+    // Emoji labels are legal NASM and common enough in this codebase.
+    const emoji = P.parseDocument("main:\n .go👍:\n jmp .go👍\nother:\n .go👍:\n ret\n");
+    ok(emoji.symbols.some((s) => s.name === ".go👍"), "emoji local label parsed");
+    ok(P.findSymbolInScope(emoji, ".go👍", 2).line === 1, "emoji label resolves in first scope");
+    ok(P.findSymbolInScope(emoji, ".go👍", 4).line === 4, "emoji label resolves in second scope");
+
+    // Duplicate local labels: resolve and complete within the enclosing scope.
+    const scoped = P.parseDocument(
+        "one:\n jmp .done\n.done:\n ret\ntwo:\n jmp .done\n.done:\n ret\n"
+    );
+    ok(P.findSymbolInScope(scoped, ".done", 1).line === 2, "local label resolves to own scope");
+    ok(P.findSymbolInScope(scoped, ".done", 5).line === 6, "duplicate local label resolves per function");
+    const oneScope = P.symbolsForCompletion(scoped, 1);
+    ok(oneScope.filter((s) => s.name === ".done").length === 1, "completion offers one .done");
+    ok(!oneScope.some((s) => s.line === 6), "completion omits locals from other scopes");
+
     const L = require(path.join(SERVER_OUT, "libscan.js"));
     const cache = L.ldconfigMap();
     ok(cache.size > 100, `ldconfig entries (${cache.size})`);
@@ -297,6 +313,22 @@ async function integration() {
     const B = ["extern calcStrExpr", "extern printf", "extern bogus_sym_xyz", "_start:", "    call calcStrExpr", "    ret", ""].join("\n");
     fs.writeFileSync(`${WS}/a.asm`, A);
     fs.writeFileSync(`${WS}/b.asm`, B);
+    const S = [
+        "section .text",
+        "main:",
+        "    mov r12, r13",
+        "    jmp .lo",
+        ".loop:",
+        "    jbe .height👍",
+        ".height👍:",
+        "    ret",
+        "other:",
+        "    jmp .loop",
+        ".loop:",
+        "    ret",
+        "",
+    ].join("\n");
+    fs.writeFileSync(`${WS}/scope.asm`, S);
 
     const c = lspClient(path.join(SERVER_OUT, "server.js"));
     const cannedSettings = {
@@ -318,7 +350,41 @@ async function integration() {
         });
     open("a.asm");
     open("b.asm");
+    open("scope.asm");
     await new Promise((r) => setTimeout(r, 600));
+
+    const scUri = `file://${WS}/scope.asm`;
+    const compDone = await c.req("textDocument/completion", {
+        textDocument: { uri: scUri },
+        position: { line: 2, character: "    mov r12, r13".length },
+    });
+    ok((compDone.result || []).length === 0, "exact operand suppresses completion (r13)");
+
+    const compLo = await c.req("textDocument/completion", {
+        textDocument: { uri: scUri },
+        position: { line: 3, character: 11 },
+    });
+    const loLabels = (compLo.result || []).map((i) => i.label);
+    ok(loLabels.includes(".loop") && loLabels.filter((l) => l === ".loop").length === 1, "scoped local label completion: " + loLabels);
+
+    const defOther = await c.req("textDocument/definition", {
+        textDocument: { uri: scUri },
+        position: { line: 9, character: 12 },
+    });
+    ok(defOther.result && defOther.result.range.start.line === 10, "local label definition follows scope");
+
+    const defEmoji = await c.req("textDocument/definition", {
+        textDocument: { uri: scUri },
+        position: { line: 5, character: 12 },
+    });
+    ok(defEmoji.result && defEmoji.result.range.start.line === 6, "emoji label definition");
+
+    const hovScoped = await c.req("textDocument/hover", {
+        textDocument: { uri: scUri },
+        position: { line: 9, character: 12 },
+    });
+    const hovScopedText = (hovScoped.result && hovScoped.result.contents && hovScoped.result.contents.value) || "";
+    ok(hovScopedText.includes("Local label under `other`"), "local label hover shows scope");
 
     const hov = await c.req("textDocument/hover", { textDocument: { uri: `file://${WS}/b.asm` }, position: { line: 4, character: 12 } });
     const hv = (hov.result && hov.result.contents && hov.result.contents.value) || "";
@@ -455,7 +521,7 @@ async function integration() {
         `${WS}/s.asm`,
         ["struc Button", "    .x resd 1", "    .w resd 1", "    .width resd 1", "    .kind equ 0", "endstruc", "global useit", "useit:", "    ret", ""].join("\n")
     );
-    const uText = ["extern useit", "_start:", "    mov eax, [rcx + Button.]", "    mov eax, [rcx + Button.w]", "    mov eax, Button_size", ""].join("\n");
+    const uText = ["extern useit", "_start:", "    mov eax, [rcx + Button.]", "    mov eax, [rcx + Button.w]", "    mov eax, Button_size", "    mov eax, [rcx + Button.wid]", ""].join("\n");
     fs.writeFileSync(`${WS}/u.asm`, uText);
     const sUri = `file://${WS}/s.asm`;
     c.notify("textDocument/didOpen", { textDocument: { uri: sUri, languageId: "nasm", version: 1, text: fs.readFileSync(`${WS}/s.asm`, "utf8") } });
@@ -466,13 +532,13 @@ async function integration() {
     const compDot = await c.req("textDocument/completion", { textDocument: { uri: uUri }, position: { line: 2, character: 27 } });
     const dotLabels = (compDot.result || []).map((i) => i.label).sort();
     ok(dotLabels.join() === "Button.kind,Button.w,Button.width,Button.x", "members complete after Button.: " + dotLabels.join());
-    const compW = await c.req("textDocument/completion", { textDocument: { uri: uUri }, position: { line: 3, character: 28 } });
+    const compW = await c.req("textDocument/completion", { textDocument: { uri: uUri }, position: { line: 5, character: 30 } });
     const wLabels = (compW.result || []).map((i) => i.label).sort();
-    ok(wLabels.join() === "Button.w,Button.width", "members filtered by prefix: " + wLabels.join());
+    ok(wLabels.join() === "Button.width", "members filtered by longer prefix: " + wLabels.join());
     const wItem = (compW.result || []).find((i) => i.label === "Button.width");
     const wEdit = wItem && wItem.textEdit;
     ok(
-        !!wEdit && wEdit.newText === "Button.width" && wEdit.range.start.character === 20 && wEdit.range.end.character === 28,
+        !!wEdit && wEdit.newText === "Button.width" && wEdit.range.start.character === 20 && wEdit.range.end.character === 30,
         "member textEdit replaces the whole qualified word (no Tool.Tool duplication)"
     );
     // local dot-labels get the same treatment: `.lo` must become `.loop`, not `..loop`
@@ -488,7 +554,7 @@ async function integration() {
         !!dEdit && dEdit.newText === ".loop" && dEdit.range.start.character === 8 && dEdit.range.end.character === 11,
         "dot-label textEdit covers the dot"
     );
-    const compSize = await c.req("textDocument/completion", { textDocument: { uri: uUri }, position: { line: 4, character: 24 } });
+    const compSize = await c.req("textDocument/completion", { textDocument: { uri: uUri }, position: { line: 4, character: 21 } });
     ok((compSize.result || []).some((i) => i.label === "Button_size"), "synthesized Button_size completes");
     const hovM = await c.req("textDocument/hover", { textDocument: { uri: uUri }, position: { line: 3, character: 26 } });
     const hvM = (hovM.result && hovM.result.contents && hovM.result.contents.value) || "";
