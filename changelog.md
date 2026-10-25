@@ -1,3 +1,12 @@
+# 0.3.8
+
+- Fixed syntax highlighting for NASM single-quoted strings containing
+  backslashes (for example ASCII art with `\` before the closing quote).
+  NASM treats single-quoted strings literally, so `\'` no longer starts an
+  unterminated string that colors the rest of the file.
+- Added backtick-quoted string highlighting, which does support escapes.
+- Added grammar tests for literal single quotes and escaped double quotes.
+
 # 0.3.7
 
 - Fixed pending gdb breakpoints being reported as verified. GDB marks them

@@ -86,5 +86,45 @@ for (const w of ["byte", "dword", "qword", "rel", "wrt", "strict"]) {
     ok(at(w).includes("storage.type.data"), `${w} shares the dq/resq storage color`);
 }
 
+// NASM single-quoted strings are literal: a backslash does not escape the
+// closing quote. Treating it as an escape makes the rest of the file a string.
+const stringRules = G.repository.string.patterns;
+const quoteRule = (q) => stringRules.find((r) => r.begin === q && r.end === q);
+const hasEscapes = (rule) => (rule.patterns || []).some((p) => p.name === "constant.character.escape.nasm");
+const endsInString = (rule, line) => {
+    let inString = false;
+    for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (!inString) {
+            if (ch === rule.begin) inString = true;
+        } else if (hasEscapes(rule) && ch === "\\") {
+            i++;
+        } else if (ch === rule.end) {
+            inString = false;
+        }
+    }
+    return inString;
+};
+const singleRule = quoteRule("'");
+const doubleRule = quoteRule('"');
+const backtickRule = quoteRule("`");
+ok(singleRule && !hasEscapes(singleRule), "single-quoted strings do not use backslash escapes");
+ok(doubleRule && hasEscapes(doubleRule), "double-quoted strings use backslash escapes");
+ok(backtickRule && hasEscapes(backtickRule), "backtick strings use backslash escapes");
+const shackLines = [
+    "Shack:",
+    "        db '  _______', 0",
+    "        db ' /  LOG  \\', 0",
+    "        db '/__SHACK__\\', 0",
+    "        db ' |       |', 0",
+    "        db ' |   _   |', 0",
+    "        db ' |  | |  |', 0",
+    "%define ShackX 20",
+];
+for (const [index, line] of shackLines.entries()) {
+    ok(!endsInString(singleRule, line), `single-quoted string closes on shack line ${index + 1}`);
+}
+ok(!endsInString(doubleRule, 'db "a\\"b", 0'), "escaped double quote stays inside the string");
+
 console.log(fails ? `${fails} FAILURES` : "GRAMMAR TESTS PASS");
 process.exit(fails ? 1 : 0);

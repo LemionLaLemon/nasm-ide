@@ -114,7 +114,12 @@
         {
           "name": "string.quoted.single.nasm",
           "begin": "'",
-          "end": "'",
+          "end": "'"
+        },
+        {
+          "name": "string.quoted.backtick.nasm",
+          "begin": "`",
+          "end": "`",
           "patterns": [
             {
               "name": "constant.character.escape.nasm",
